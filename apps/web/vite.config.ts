@@ -2,6 +2,8 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 import { VitePWA } from "vite-plugin-pwa";
 
+const timestamp = Date.now();
+
 export default defineConfig({
   plugins: [
     react(),
@@ -50,9 +52,9 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       output: {
-        entryFileNames: "assets/[name]-[hash]-[timestamp].js",
-        chunkFileNames: "assets/[name]-[hash]-[timestamp].js",
-        assetFileNames: "assets/[name]-[hash]-[timestamp][extname]",
+        entryFileNames: `assets/[name]-[hash]-${timestamp}.js`,
+        chunkFileNames: `assets/[name]-[hash]-${timestamp}.js`,
+        assetFileNames: `assets/[name]-[hash]-${timestamp}[extname]`,
       }
     }
   },
