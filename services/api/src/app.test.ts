@@ -130,6 +130,7 @@ describe("REST API", () => {
     const { app, activities } = testApp();
     const response = await request(app).get("/api/v1/activity-routes").expect(200);
     expect(response.headers["content-type"]).toMatch(/^application\/geo\+json/);
+    expect(response.headers["cache-control"]).toBe("no-store");
     expect(response.body).toEqual({ type: "FeatureCollection", features: [] });
     expect(activities.listRoutes).toHaveBeenCalledWith(
       { oldest: "2026-05-22", newest: "2026-07-20" },

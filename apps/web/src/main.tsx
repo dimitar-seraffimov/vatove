@@ -1,4 +1,5 @@
 import { createRoot } from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
 import "maplibre-gl/dist/maplibre-gl.css";
 import App from "./App";
 import { TooltipProvider } from "./context/TooltipContext";
@@ -10,11 +11,13 @@ const root = document.getElementById("root");
 if (!root) throw new Error("Missing #root application mount point");
 
 createRoot(root).render(
-  <TooltipProvider>
-    <MapProvider>
-      <App />
-    </MapProvider>
-  </TooltipProvider>,
+  <BrowserRouter>
+    <TooltipProvider>
+      <MapProvider>
+        <App />
+      </MapProvider>
+    </TooltipProvider>
+  </BrowserRouter>,
 );
 
 registerServiceWorker();

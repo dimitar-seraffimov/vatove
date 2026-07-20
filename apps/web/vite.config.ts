@@ -15,7 +15,7 @@ export default defineConfig({
         short_name: "vatove",
         description: "Explore Intervals.icu routes, heart-rate zones, and elevation.",
         theme_color: "#071712",
-        background_color: "#f3f1e9",
+        background_color: "#071712",
         display: "standalone",
         orientation: "any",
         start_url: "/",
@@ -74,7 +74,7 @@ export default defineConfig({
     }
   },
   test: {
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     environment: "node",
     coverage: {
       reporter: ["text", "html"]

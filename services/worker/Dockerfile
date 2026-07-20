@@ -17,4 +17,4 @@ RUN python -m venv /app/.venv \
 
 USER vatove
 
-CMD ["vatove-worker"]
+CMD ["/bin/sh", "-c", "alembic -c services/worker/alembic.ini upgrade head && exec vatove-worker"]

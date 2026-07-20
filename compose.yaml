@@ -62,6 +62,7 @@ services:
     restart: "no"
 
   migrate:
+    image: localhost/vatove-worker:local
     build:
       context: .
       dockerfile: services/worker/Dockerfile
@@ -90,13 +91,14 @@ services:
       kafka-init:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/v1/health/live').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/v1/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 10
     restart: unless-stopped
 
   worker:
+    image: localhost/vatove-worker:local
     build:
       context: .
       dockerfile: services/worker/Dockerfile
@@ -123,7 +125,7 @@ services:
       context: .
       dockerfile: infra/nginx/Dockerfile
       args:
-        VITE_MAP_STYLE_URL: ${VITE_MAP_STYLE_URL:-https://tiles.openfreemap.org/styles/liberty}
+        VITE_MAP_STYLE_URL: ${VITE_MAP_STYLE_URL:-https://tiles.openfreemap.org/styles/dark}
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:

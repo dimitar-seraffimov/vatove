@@ -35,6 +35,40 @@ If image pulls fail with `x509: certificate signed by unknown authority` on a ma
 install the organization's root CA in the Podman machine trust store and restart the machine. Do
 not work around the error by marking public registries insecure.
 
+## Updating an existing Podman stack
+
+Build every changed application image, run the migration explicitly, and recreate the long-running
+containers so that they cannot continue using an older image:
+
+```sh
+git pull --ff-only
+podman-compose build migrate api worker nginx
+podman-compose run --rm migrate alembic -c services/worker/alembic.ini upgrade head
+podman-compose up -d --force-recreate api worker nginx
+```
+
+If the installed `podman-compose` does not support `--force-recreate`, use a full container
+recreation. This preserves the named PostGIS and Kafka volumes; do not add `-v`:
+
+```sh
+podman-compose down
+podman-compose up -d --build
+```
+
+Verify that the database, API, worker, and migration image all use the updated revision without
+printing credentials:
+
+```sh
+podman-compose exec postgis sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT version_num FROM alembic_version"'
+podman-compose exec api grep -q 'subtractCalendarDays(newest, 59)' services/api/dist/dates.js
+curl --fail --silent http://127.0.0.1:8080/api/v1/health/ready
+podman-compose ps
+```
+
+The revision query must print `20260720_0002`, the `grep` command must exit successfully, and the
+readiness endpoint must return `{"status":"ok"}`. Trigger a new sync after deployment; a failed
+event that was already sent to the dead-letter topic is not retried automatically.
+
 ## Checks
 
 ```powershell

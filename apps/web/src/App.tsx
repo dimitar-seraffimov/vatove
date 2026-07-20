@@ -1,14 +1,22 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ActivityDetail, SyncRun } from "@vatove/contracts";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { createSyncRun, getActivity, getSyncRun } from "./api/client";
 import { ActivityDetails } from "./components/ActivityDetails";
 import { ActivityList } from "./components/ActivityList";
+import { BrandLink } from "./components/BrandLink";
 import { ElevationChart } from "./components/ElevationChart";
+import { HeartRateChart } from "./components/HeartRateChart";
+import { HomePanel } from "./components/HomePanel";
+import { PlaceholderPage } from "./components/PlaceholderPage";
 import { useTooltip } from "./context/TooltipContext";
 import { useActivityFeed } from "./hooks/useActivityFeed";
 import { useActivityRoutes } from "./hooks/useActivityRoutes";
 import { useOnlineStatus } from "./hooks/useOnlineStatus";
 import { ActivityMap } from "./map/ActivityMap";
+
+const COMPLETION_NOTICE_MS = 3_000;
+const PANEL_TRANSITION_MS = 260;
 
 function messageFrom(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong.";
@@ -24,7 +32,23 @@ function syncLabel(syncRun: SyncRun | null): string {
   return "Sync latest 60 days";
 }
 
+function pageTitle(pathname: string): string {
+  const label =
+    pathname === "/analyse"
+      ? "Analyse"
+      : pathname === "/account"
+        ? "Account"
+        : pathname === "/plan"
+          ? "Plan"
+          : pathname === "/settings"
+            ? "Settings"
+            : "Home";
+  return `vatove · ${label}`;
+}
+
 export default function App() {
+  const location = useLocation();
+  const analysing = location.pathname === "/analyse";
   const feed = useActivityFeed();
   const routeFeed = useActivityRoutes();
   const online = useOnlineStatus();
@@ -32,11 +56,24 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectionRevision, setSelectionRevision] = useState(0);
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [detail, setDetail] = useState<ActivityDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [syncRun, setSyncRun] = useState<SyncRun | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const fitTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    document.title = pageTitle(location.pathname);
+  }, [location.pathname]);
+
+  useEffect(
+    () => () => {
+      if (fitTimerRef.current !== null) window.clearTimeout(fitTimerRef.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (
@@ -46,6 +83,7 @@ export default function App() {
     ) {
       setSelectedId(null);
       setMobileDetailOpen(false);
+      setDetailsExpanded(false);
     }
   }, [feed.activities, feed.loading, selectedId]);
 
@@ -100,6 +138,17 @@ export default function App() {
     };
   }, [refreshActivities, refreshRoutes, syncRunId, syncRunStatus]);
 
+  useEffect(() => {
+    if (syncRun?.status !== "completed" || syncError) return;
+    const completedId = syncRun.id;
+    const timer = window.setTimeout(() => {
+      setSyncRun((current) =>
+        current?.id === completedId && current.status === "completed" ? null : current,
+      );
+    }, COMPLETION_NOTICE_MS);
+    return () => window.clearTimeout(timer);
+  }, [syncError, syncRun]);
+
   const startSync = useCallback(async () => {
     setSyncError(null);
     try {
@@ -109,15 +158,46 @@ export default function App() {
     }
   }, []);
 
+  const reviseSelection = useCallback((delay = 0) => {
+    if (fitTimerRef.current !== null) window.clearTimeout(fitTimerRef.current);
+    if (delay === 0) {
+      fitTimerRef.current = null;
+      setSelectionRevision((revision) => revision + 1);
+      return;
+    }
+    fitTimerRef.current = window.setTimeout(() => {
+      fitTimerRef.current = null;
+      setSelectionRevision((revision) => revision + 1);
+    }, delay);
+  }, []);
+
   const chooseActivity = useCallback(
     (id: string) => {
+      const selectingDifferent = id !== selectedId;
+      const waitForPanel = selectingDifferent && detailsExpanded;
       setActiveSampleIndex(null);
+      if (selectingDifferent) setDetailsExpanded(false);
       setSelectedId(id);
-      setSelectionRevision((revision) => revision + 1);
+      reviseSelection(waitForPanel ? PANEL_TRANSITION_MS : 0);
       setMobileDetailOpen(true);
     },
-    [setActiveSampleIndex],
+    [detailsExpanded, reviseSelection, selectedId, setActiveSampleIndex],
   );
+
+  const minimiseDetails = useCallback(() => {
+    setDetailsExpanded(false);
+    reviseSelection(PANEL_TRANSITION_MS);
+  }, [reviseSelection]);
+
+  const toggleDetailsExpanded = useCallback(() => {
+    if (detailsExpanded) minimiseDetails();
+    else setDetailsExpanded(true);
+  }, [detailsExpanded, minimiseDetails]);
+
+  const returnToActivities = useCallback(() => {
+    setMobileDetailOpen(false);
+    if (detailsExpanded) minimiseDetails();
+  }, [detailsExpanded, minimiseDetails]);
 
   const visibleDetail = detail?.id === selectedId ? detail : null;
   const hasElevationProfile = useMemo(
@@ -127,18 +207,31 @@ export default function App() {
       ).length ?? 0) >= 2,
     [visibleDetail],
   );
+  const hasHeartRateProfile = useMemo(
+    () =>
+      (visibleDetail?.samples.filter(
+        (sample) => sample.heartRateBpm !== null && Number.isFinite(sample.heartRateBpm),
+      ).length ?? 0) >= 2,
+    [visibleDetail],
+  );
 
   return (
-    <div className={`app-shell${mobileDetailOpen ? " is-mobile-detail-open" : ""}`}>
+    <div
+      className={`app-shell${mobileDetailOpen && analysing ? " is-mobile-detail-open" : ""}${detailsExpanded && analysing ? " is-detail-expanded" : ""}`}
+    >
       <ActivityMap
-        activity={visibleDetail}
+        activity={analysing ? visibleDetail : null}
         routes={routeFeed.routes}
-        selectedId={selectedId}
+        selectedId={analysing ? selectedId : null}
         selectionRevision={selectionRevision}
-        loadingDetail={detailLoading}
+        loadingDetail={analysing && detailLoading}
         loadingRoutes={routeFeed.loading}
         routesError={routeFeed.error}
-        onSelectActivity={chooseActivity}
+        routesInteractive={analysing}
+        onRetryRoutes={() => void routeFeed.refresh()}
+        onSelectActivity={(id) => {
+          if (analysing) chooseActivity(id);
+        }}
       />
 
       <div className="floating-messages" aria-live="polite">
@@ -156,57 +249,81 @@ export default function App() {
         )}
       </div>
 
-      <aside className="left-overlay" data-map-overlay aria-label="Activity explorer">
-        <header className="panel-header">
-          <a className="brand" href="/" aria-label="vatove home">
-            <span className="brand-mark" aria-hidden="true">
-              <i />
-            </span>
-            <span>
-              <strong>vatove</strong>
-              <small>Activity explorer</small>
-            </span>
-          </a>
-          <span className={`network-status${online ? "" : " is-offline"}`}>
-            <i aria-hidden="true" />
-            {online ? "Local stack" : "Offline"}
-          </span>
-        </header>
+      <Routes>
+        <Route path="/" element={<HomePanel />} />
+        <Route
+          path="/analyse"
+          element={
+            <aside className="left-overlay" data-map-overlay aria-label="Activity explorer">
+              <header className="panel-header">
+                <BrandLink />
+                <span className={`network-status${online ? "" : " is-offline"}`}>
+                  <i aria-hidden="true" />
+                  {online ? "Local stack" : "Offline"}
+                </span>
+              </header>
 
-        <button
-          type="button"
-          className="sync-button"
-          disabled={syncing || !online}
-          onClick={() => void startSync()}
-        >
-          <span className={syncing ? "sync-icon is-spinning" : "sync-icon"} aria-hidden="true">
-            ↻
-          </span>
-          {syncLabel(syncRun)}
-        </button>
+              <button
+                type="button"
+                className="sync-button"
+                disabled={syncing || !online}
+                onClick={() => void startSync()}
+              >
+                <span className={syncing ? "sync-icon is-spinning" : "sync-icon"} aria-hidden="true">
+                  ↻
+                </span>
+                {syncLabel(syncRun)}
+              </button>
 
-        <ActivityList
-          activities={feed.activities}
-          selectedId={selectedId}
-          selectionRevision={selectionRevision}
-          loading={feed.loading}
-          error={feed.error}
-          onSelect={chooseActivity}
-          onRetry={() => void feed.refresh()}
+              <ActivityList
+                activities={feed.activities}
+                selectedId={selectedId}
+                selectionRevision={selectionRevision}
+                loading={feed.loading}
+                error={feed.error}
+                onSelect={chooseActivity}
+                onRetry={() => void feed.refresh()}
+              />
+            </aside>
+          }
         />
-      </aside>
+        <Route
+          path="/account"
+          element={
+            <PlaceholderPage
+              title="Account"
+              description="Athlete identity, connected services, and profile controls will live here."
+            />
+          }
+        />
+        <Route
+          path="/plan"
+          element={
+            <PlaceholderPage
+              title="Plan"
+              description="Future sessions, training blocks, and recovery planning are on the roadmap."
+            />
+          }
+        />
+        <Route
+          path="/settings"
+          element={
+            <PlaceholderPage
+              title="Settings"
+              description="Application, map, and data-source preferences will be configured here."
+            />
+          }
+        />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
 
-      {selectedId && (
+      {analysing && selectedId && (
         <aside
-          className={`detail-overlay${mobileDetailOpen ? " is-mobile-open" : ""}`}
+          className={`detail-overlay${mobileDetailOpen ? " is-mobile-open" : ""}${detailsExpanded ? " is-expanded" : ""}`}
           data-map-overlay
           aria-label="Selected activity"
         >
-          <button
-            type="button"
-            className="mobile-back"
-            onClick={() => setMobileDetailOpen(false)}
-          >
+          <button type="button" className="mobile-back" onClick={returnToActivities}>
             <span aria-hidden="true">←</span> Back to activities
           </button>
 
@@ -221,8 +338,20 @@ export default function App() {
               <span>{detailError}</span>
             </div>
           )}
-          {visibleDetail && <ActivityDetails activity={visibleDetail} />}
+          {visibleDetail && (
+            <ActivityDetails
+              activity={visibleDetail}
+              expanded={detailsExpanded}
+              onToggleExpanded={toggleDetailsExpanded}
+            />
+          )}
           {visibleDetail && hasElevationProfile && <ElevationChart samples={visibleDetail.samples} />}
+          {visibleDetail && hasHeartRateProfile && (
+            <HeartRateChart
+              samples={visibleDetail.samples}
+              zones={visibleDetail.heartRateZones}
+            />
+          )}
           {visibleDetail && !visibleDetail.hasHeartRate && (
             <p className="data-note">
               No heart-rate stream was recorded; the selected route uses a neutral colour.

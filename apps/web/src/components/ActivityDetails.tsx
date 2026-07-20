@@ -11,13 +11,19 @@ import { formatZoneRange, summarizeZoneTiming } from "./heartRateAnalysis";
 
 export interface ActivityDetailsProps {
   activity: ActivityDetailType;
+  expanded: boolean;
+  onToggleExpanded: () => void;
 }
 
 function formatHeartRate(value: number | null): string {
   return value !== null && Number.isFinite(value) ? `${Math.round(value)} bpm` : "—";
 }
 
-export function ActivityDetails({ activity }: ActivityDetailsProps) {
+export function ActivityDetails({
+  activity,
+  expanded,
+  onToggleExpanded,
+}: ActivityDetailsProps) {
   const { activeSampleIndex } = useTooltip();
   const activeSample = activity.samples.find((sample) => sample.index === activeSampleIndex);
   const activeZone = activity.heartRateZones.find(
@@ -33,15 +39,26 @@ export function ActivityDetails({ activity }: ActivityDetailsProps) {
           <h1>{activity.name}</h1>
           <p>{formatActivityDate(activity.startAt)}</p>
         </div>
-        <button
-          type="button"
-          className="export-button"
-          disabled={activity.samples.length === 0}
-          onClick={() => downloadActivityGpx(activity)}
-        >
-          <span aria-hidden="true">↓</span>
-          Export GPX
-        </button>
+        <div className="detail-actions">
+          <button
+            type="button"
+            className="expand-button"
+            aria-expanded={expanded}
+            onClick={onToggleExpanded}
+          >
+            <span aria-hidden="true">{expanded ? "↙" : "↗"}</span>
+            {expanded ? "Minimise" : "Expand"}
+          </button>
+          <button
+            type="button"
+            className="export-button"
+            disabled={activity.samples.length === 0}
+            onClick={() => downloadActivityGpx(activity)}
+          >
+            <span aria-hidden="true">↓</span>
+            Export GPX
+          </button>
+        </div>
       </div>
 
       <dl className="summary-stats">

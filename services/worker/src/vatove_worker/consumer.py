@@ -10,12 +10,60 @@ from typing import Any, Protocol
 
 from confluent_kafka import Consumer, KafkaError, KafkaException, Message, Producer
 from pydantic import ValidationError
+from sqlalchemy.exc import DBAPIError, ProgrammingError
 
-from vatove_worker.database import Repository
+from vatove_worker.database import DatabaseSchemaError, Repository, SyncRunNotFoundError
+from vatove_worker.intervals import IntervalsError
 from vatove_worker.processor import SyncProcessor
 from vatove_worker.schemas import IngestionEventV1
 
 logger = logging.getLogger(__name__)
+
+_DATABASE_ERROR_HINTS = {
+    "42703": "database schema is missing a required column; run database migrations",
+    "42P01": "database schema is missing a required table; run database migrations",
+    "42704": "database schema is missing a required object; run database migrations",
+}
+
+
+def safe_error_summary(error: BaseException) -> str:
+    """Return an operator-facing error without serializing unsafe exception context.
+
+    SQLAlchemy database errors retain the statement and its bound parameters. Stringifying one can
+    therefore expose private activity metadata in logs, the sync status, or the DLQ. Only exception
+    class names, a validated SQLSTATE, and a static hint are used for database failures.
+    """
+
+    if isinstance(error, DBAPIError):
+        original = error.orig
+        sqlstate_value = getattr(original, "sqlstate", None)
+        sqlstate = (
+            sqlstate_value.upper()
+            if isinstance(sqlstate_value, str)
+            and len(sqlstate_value) == 5
+            and sqlstate_value.isalnum()
+            else None
+        )
+        identifiers = [type(error).__name__, type(original).__name__]
+        if sqlstate is not None:
+            identifiers.append(f"SQLSTATE {sqlstate}")
+        hint = _DATABASE_ERROR_HINTS.get(sqlstate)
+        if hint is None and isinstance(error, ProgrammingError):
+            hint = "database rejected a statement; verify that all migrations are applied"
+        if hint is None:
+            hint = "database operation failed"
+        return f"{' / '.join(identifiers)}: {hint}"
+
+    if isinstance(error, (DatabaseSchemaError, IntervalsError, SyncRunNotFoundError)):
+        controlled_message = " ".join(str(error).split())[:900]
+        if controlled_message:
+            return f"{type(error).__name__}: {controlled_message}"
+
+    return type(error).__name__
+
+
+def _is_retryable(error: BaseException) -> bool:
+    return not isinstance(error, (DatabaseSchemaError, ProgrammingError))
 
 
 class ConsumerLike(Protocol):
@@ -122,19 +170,24 @@ class IngestionWorker:
             return
 
         last_error: Exception | None = None
+        attempts_made = 0
         for attempt in range(1, self._max_delivery_attempts + 1):
+            attempts_made = attempt
             try:
                 self._processor.process(event)
             except Exception as error:  # noqa: BLE001 - message boundary must capture for retry/DLQ
                 last_error = error
+                error_summary = safe_error_summary(error)
+                retryable = _is_retryable(error)
                 logger.warning(
-                    "Sync event %s attempt %d/%d failed: %s",
+                    "Sync event %s attempt %d/%d failed: %s%s",
                     event.event_id,
                     attempt,
                     self._max_delivery_attempts,
-                    type(error).__name__,
+                    error_summary,
+                    " (not retrying)" if not retryable else "",
                 )
-                if attempt < self._max_delivery_attempts:
+                if retryable and attempt < self._max_delivery_attempts:
                     self._sleep(min(float(2 ** (attempt - 1)), 30.0))
                     continue
                 break
@@ -143,14 +196,14 @@ class IngestionWorker:
                 return
 
         assert last_error is not None
-        error_text = f"{type(last_error).__name__}: {last_error}"
+        error_text = safe_error_summary(last_error)
         self._repository.fail_sync(event.sync_run_id, error_text)
         self._repository.record_failure(event=event, error=error_text)
         self._publish_dlq(
             message,
             event=event,
             error=error_text,
-            attempts=self._max_delivery_attempts,
+            attempts=attempts_made,
         )
         self._consumer.commit(message=message, asynchronous=False)
 
@@ -193,4 +246,3 @@ class IngestionWorker:
             raise KafkaException(
                 f"could not deliver event to DLQ (remaining={remaining}, errors={delivery_errors})"
             )
-

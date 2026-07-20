@@ -4,11 +4,13 @@ import logging
 import signal
 import threading
 
-from sqlalchemy import text
-
 from vatove_worker.config import get_settings
 from vatove_worker.consumer import IngestionWorker, build_consumer, build_producer
-from vatove_worker.database import Repository, create_database_engine
+from vatove_worker.database import (
+    Repository,
+    assert_schema_compatible,
+    create_database_engine,
+)
 from vatove_worker.intervals import IntervalsClient
 from vatove_worker.processor import SyncProcessor
 
@@ -22,8 +24,7 @@ def main() -> None:
     logger = logging.getLogger(__name__)
 
     engine = create_database_engine(settings.database_url)
-    with engine.connect() as connection:
-        connection.execute(text("SELECT 1"))
+    assert_schema_compatible(engine)
 
     repository = Repository(engine)
     intervals = IntervalsClient(

@@ -11,7 +11,7 @@ COPY apps/web/src ./apps/web/src
 COPY services/api/package.json ./services/api/package.json
 
 RUN npm ci --include=dev
-ARG VITE_MAP_STYLE_URL=https://tiles.openfreemap.org/styles/liberty
+ARG VITE_MAP_STYLE_URL=https://tiles.openfreemap.org/styles/dark
 ENV VITE_MAP_STYLE_URL=$VITE_MAP_STYLE_URL
 RUN npm run build --workspace @vatove/contracts && npm run build --workspace @vatove/web
 

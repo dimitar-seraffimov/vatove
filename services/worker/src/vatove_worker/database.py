@@ -8,15 +8,76 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from geoalchemy2.elements import WKTElement
-from sqlalchemy import create_engine, func, select, update
+from sqlalchemy import create_engine, func, inspect, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from vatove_worker.models import Activity, IngestionFailure, SyncRun
 from vatove_worker.schemas import IngestionEventV1, NormalizedActivity
 
 logger = logging.getLogger(__name__)
+
+REQUIRED_SCHEMA_REVISION = "20260720_0002"
+_REQUIRED_ACTIVITY_COLUMNS = frozenset(
+    {
+        "average_heart_rate_bpm",
+        "max_heart_rate_bpm",
+    }
+)
+
+
+class DatabaseSchemaError(RuntimeError):
+    """The connected database is not compatible with this worker build."""
+
+
+def assert_schema_compatible(engine: Engine) -> None:
+    """Fail before ingestion when the database has not received required migrations.
+
+    The checks deliberately report only revision and application-owned column names. Database
+    exception strings can contain statements and bound values, so inspection failures are wrapped
+    in a controlled message instead of being copied into logs or failure records.
+    """
+
+    migration_hint = (
+        f"Run database migrations through revision {REQUIRED_SCHEMA_REVISION} "
+        "before starting the worker."
+    )
+    try:
+        schema_inspector = inspect(engine)
+        if not schema_inspector.has_table("alembic_version"):
+            raise DatabaseSchemaError(f"Database migration state is missing. {migration_hint}")
+
+        with engine.connect() as connection:
+            revisions = set(
+                connection.execute(text("SELECT version_num FROM alembic_version")).scalars()
+            )
+
+        if revisions != {REQUIRED_SCHEMA_REVISION}:
+            raise DatabaseSchemaError(
+                f"Database schema is not at required revision {REQUIRED_SCHEMA_REVISION}. "
+                f"{migration_hint}"
+            )
+
+        if not schema_inspector.has_table("activities"):
+            raise DatabaseSchemaError(f"Required activities table is missing. {migration_hint}")
+        activity_columns = {
+            str(column["name"]) for column in schema_inspector.get_columns("activities")
+        }
+    except DatabaseSchemaError:
+        raise
+    except SQLAlchemyError:
+        raise DatabaseSchemaError(
+            f"Database schema could not be verified. {migration_hint}"
+        ) from None
+
+    missing_columns = sorted(_REQUIRED_ACTIVITY_COLUMNS - activity_columns)
+    if missing_columns:
+        raise DatabaseSchemaError(
+            "Database schema is missing required activity columns "
+            f"{', '.join(missing_columns)}. {migration_hint}"
+        )
 
 
 class SyncRunNotFoundError(RuntimeError):

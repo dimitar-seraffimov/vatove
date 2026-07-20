@@ -9,7 +9,8 @@ import maplibregl, {
   type Marker,
 } from "maplibre-gl";
 import { useTooltip } from "../context/TooltipContext";
-import { buildHeartRateGradient } from "./heartRateGradient";
+import { NEUTRAL_ROUTE_COLOR } from "./heartRateGradient";
+import { buildHeartRateRouteSegments } from "./heartRateSegments";
 import { useMap } from "./MapProvider";
 import { snapToSampleIndex } from "./snapToRoute";
 
@@ -133,9 +134,9 @@ function ensureSourcesAndLayers(
       source: OVERVIEW_SOURCE_ID,
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
-        "line-color": "#304f45",
+        "line-color": "#71817c",
         "line-width": ["interpolate", ["linear"], ["zoom"], 3, 1.25, 12, 2.5, 18, 4],
-        "line-opacity": 0.58,
+        "line-opacity": 0.48,
       },
     });
   }
@@ -147,10 +148,10 @@ function ensureSourcesAndLayers(
       filter: selectedFilter(selectedId),
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
-        "line-color": "#d9ff66",
+        "line-color": NEUTRAL_ROUTE_COLOR,
         "line-width": ["interpolate", ["linear"], ["zoom"], 3, 3, 12, 7, 18, 11],
-        "line-opacity": 0.95,
-        "line-blur": 0.3,
+        "line-opacity": 0.82,
+        "line-blur": 0.2,
       },
     });
   } else {
@@ -166,18 +167,16 @@ function ensureSourcesAndLayers(
     });
   }
 
-  const selectedRoute = activity?.route ?? EMPTY_ROUTES;
+  const selectedRoute = activity ? buildHeartRateRouteSegments(activity) : EMPTY_ROUTES;
   const activeSource = map.getSource(ACTIVE_SOURCE_ID) as GeoJSONSource | undefined;
   if (activeSource) activeSource.setData(selectedRoute);
   else {
     map.addSource(ACTIVE_SOURCE_ID, {
       type: "geojson",
       data: selectedRoute,
-      lineMetrics: true,
     });
   }
 
-  const gradient = buildHeartRateGradient(activity?.samples ?? [], activity?.heartRateZones ?? []);
   if (!map.getLayer(ACTIVE_LAYER_ID)) {
     map.addLayer({
       id: ACTIVE_LAYER_ID,
@@ -187,11 +186,9 @@ function ensureSourcesAndLayers(
       paint: {
         "line-width": ["interpolate", ["linear"], ["zoom"], 3, 3, 12, 7, 18, 12],
         "line-opacity": 0.98,
-        "line-gradient": gradient,
+        "line-color": ["coalesce", ["get", "color"], NEUTRAL_ROUTE_COLOR],
       },
     });
-  } else {
-    map.setPaintProperty(ACTIVE_LAYER_ID, "line-gradient", gradient);
   }
 }
 
@@ -203,6 +200,8 @@ export interface ActivityMapProps {
   loadingDetail?: boolean;
   loadingRoutes?: boolean;
   routesError?: string | null;
+  routesInteractive?: boolean;
+  onRetryRoutes?: () => void;
   onSelectActivity: (id: string) => void;
 }
 
@@ -214,12 +213,13 @@ export function ActivityMap({
   loadingDetail = false,
   loadingRoutes = false,
   routesError = null,
+  routesInteractive = true,
+  onRetryRoutes,
   onSelectActivity,
 }: ActivityMapProps) {
   const { map, styleRevision, containerRef, contextLost, initializationError } = useMap();
   const { activeSampleIndex, setActiveSampleIndex } = useTooltip();
   const markerRef = useRef<Marker | null>(null);
-  const hasFittedOverviewRef = useRef(false);
   const routeData = routes as RouteCollection;
   const selectedActivity = activity?.id === selectedId ? activity : null;
   const selectedOverviewRoute = useMemo(
@@ -235,6 +235,7 @@ export function ActivityMap({
   useEffect(() => {
     if (!map || styleRevision === 0) return;
     const onMapClick = (event: MapMouseEvent) => {
+      if (!routesInteractive) return;
       if (!map.getLayer(OVERVIEW_HIT_LAYER_ID)) return;
       const feature = map.queryRenderedFeatures(event.point, { layers: [OVERVIEW_HIT_LAYER_ID] })[0];
       const activityId = feature?.properties?.activityId;
@@ -251,6 +252,10 @@ export function ActivityMap({
       }
     };
     const onMapMove = (event: MapMouseEvent) => {
+      if (!routesInteractive) {
+        map.getCanvas().style.cursor = "";
+        return;
+      }
       if (!map.getLayer(OVERVIEW_HIT_LAYER_ID)) return;
       const hoveringRoute = map.queryRenderedFeatures(event.point, {
         layers: [OVERVIEW_HIT_LAYER_ID],
@@ -269,19 +274,14 @@ export function ActivityMap({
       map.off("mouseout", clearCursor);
       clearCursor();
     };
-  }, [map, onSelectActivity, selectedActivity, setActiveSampleIndex, styleRevision]);
-
-  useEffect(() => {
-    if (!map || styleRevision === 0 || selectedId || hasFittedOverviewRef.current) return;
-    const bounds = routeBounds(routeData.features);
-    if (!bounds || !map.getContainer()) return;
-    map.fitBounds(bounds, {
-      padding: fitPadding(map.getContainer()),
-      maxZoom: 12,
-      duration: 0,
-    });
-    hasFittedOverviewRef.current = true;
-  }, [map, routeData.features, selectedId, styleRevision]);
+  }, [
+    map,
+    onSelectActivity,
+    routesInteractive,
+    selectedActivity,
+    setActiveSampleIndex,
+    styleRevision,
+  ]);
 
   useEffect(() => {
     if (!map || styleRevision === 0 || !selectedId || !selectedOverviewRoute) return;
@@ -367,7 +367,12 @@ export function ActivityMap({
       )}
       {routesError && (
         <div className="map-status map-status--error" role="alert">
-          Routes unavailable · {routesError}
+          <span>Routes unavailable · {routesError}</span>
+          {onRetryRoutes && (
+            <button type="button" onClick={onRetryRoutes}>
+              Retry routes
+            </button>
+          )}
         </div>
       )}
       {noRoutes && (

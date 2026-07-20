@@ -11,6 +11,7 @@ import {
 } from "react";
 import maplibregl, { type Map as MapLibreMap } from "maplibre-gl";
 import type { ErrorEvent as MapLibreErrorEvent } from "maplibre-gl";
+import { DEFAULT_STYLE_URL, GLOBE_PROJECTION, INITIAL_MAP_VIEW } from "./mapDefaults";
 
 interface MapContextValue {
   map: MapLibreMap | null;
@@ -22,8 +23,6 @@ interface MapContextValue {
 }
 
 const MapContext = createContext<MapContextValue | null>(null);
-const DEFAULT_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
-
 export function MapProvider({ children }: PropsWithChildren) {
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const [map, setMap] = useState<MapLibreMap | null>(null);
@@ -53,10 +52,7 @@ export function MapProvider({ children }: PropsWithChildren) {
       instance = new maplibregl.Map({
         container,
         style: import.meta.env.VITE_MAP_STYLE_URL || DEFAULT_STYLE_URL,
-        center: [-2.5, 54.5],
-        zoom: 4.25,
-        pitch: 28,
-        bearing: 0,
+        ...INITIAL_MAP_VIEW,
         attributionControl: false,
         cooperativeGestures: true,
       });
@@ -77,10 +73,20 @@ export function MapProvider({ children }: PropsWithChildren) {
     setStyleRevision(0);
     setInitializationError(null);
     let styleHasLoaded = false;
+    const applyGlobeProjection = () => {
+      instance.setProjection(GLOBE_PROJECTION);
+      setStyleRevision((current) => current + 1);
+    };
     const handleStyleLoad = () => {
       styleHasLoaded = true;
-      setInitializationError(null);
-      setStyleRevision((current) => current + 1);
+      try {
+        applyGlobeProjection();
+        setInitializationError(null);
+      } catch (error) {
+        setInitializationError(
+          error instanceof Error ? error.message : "The globe projection could not be initialized.",
+        );
+      }
     };
     const handleMapError = (event: MapLibreErrorEvent) => {
       if (styleHasLoaded) return;
@@ -88,6 +94,7 @@ export function MapProvider({ children }: PropsWithChildren) {
     };
     instance.on("style.load", handleStyleLoad);
     instance.on("error", handleMapError);
+    if (instance.isStyleLoaded()) handleStyleLoad();
 
     const canvas = instance.getCanvas();
     const handleContextLost = (event: Event) => {
@@ -97,6 +104,16 @@ export function MapProvider({ children }: PropsWithChildren) {
     const handleContextRestored = () => {
       setContextLost(false);
       instance.resize();
+      if (instance.isStyleLoaded()) {
+        try {
+          applyGlobeProjection();
+          setInitializationError(null);
+        } catch (error) {
+          setInitializationError(
+            error instanceof Error ? error.message : "The globe projection could not be restored.",
+          );
+        }
+      }
       instance.triggerRepaint();
     };
     canvas.addEventListener("webglcontextlost", handleContextLost);

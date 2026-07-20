@@ -23,6 +23,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!headers.has("Accept")) headers.set("Accept", "application/json");
   const response = await fetch(`${API_ROOT}${path}`, {
     ...init,
+    cache: init?.cache ?? "no-store",
     headers,
   });
 

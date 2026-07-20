@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 from uuid import UUID
 
-from vatove_worker.consumer import IngestionWorker
+from sqlalchemy.exc import ProgrammingError
+
+from vatove_worker.consumer import IngestionWorker, safe_error_summary
+from vatove_worker.database import DatabaseSchemaError
+from vatove_worker.intervals import IntervalsPayloadError
 
 
 class FakeMessage:
@@ -79,6 +84,18 @@ class FakeProcessor:
         self.calls += 1
         if self.failure:
             raise self.failure
+
+
+class FakeUndefinedColumnError(Exception):
+    sqlstate = "42703"
+
+
+def secret_bearing_programming_error() -> ProgrammingError:
+    return ProgrammingError(
+        'INSERT INTO activities (raw_metadata) VALUES (%(private_payload)s)',
+        {"private_payload": "PRIVATE_ACTIVITY_PAYLOAD"},
+        FakeUndefinedColumnError("PRIVATE_DATABASE_DETAIL"),
+    )
 
 
 def event_bytes() -> bytes:
@@ -156,3 +173,72 @@ def test_invalid_event_dlq_contains_hash_not_raw_payload() -> None:
     assert repository.failures[0]["payload"]["rawSha256"] == dlq["rawSha256"]
     assert consumer.commits == [message]
 
+
+def test_database_error_summary_is_actionable_without_statement_or_parameters() -> None:
+    summary = safe_error_summary(secret_bearing_programming_error())
+
+    assert "ProgrammingError" in summary
+    assert "FakeUndefinedColumnError" in summary
+    assert "SQLSTATE 42703" in summary
+    assert "run database migrations" in summary
+    assert "INSERT INTO" not in summary
+    assert "PRIVATE_ACTIVITY_PAYLOAD" not in summary
+    assert "PRIVATE_DATABASE_DETAIL" not in summary
+
+
+def test_programming_error_is_not_retried_and_uses_safe_summary_everywhere(
+    caplog: Any,
+) -> None:
+    processor = FakeProcessor(secret_bearing_programming_error())
+    worker, consumer, producer, repository, sleeps = make_worker(processor, attempts=4)
+    message = FakeMessage(event_bytes())
+
+    with caplog.at_level(logging.WARNING, logger="vatove_worker.consumer"):
+        worker.handle_message(message)  # type: ignore[arg-type]
+
+    assert processor.calls == 1
+    assert sleeps == []
+    assert consumer.commits == [message]
+    assert len(repository.failed_syncs) == 1
+    assert len(repository.failures) == 1
+    assert len(producer.records) == 1
+
+    stored_error = repository.failed_syncs[0][1]
+    failure_error = repository.failures[0]["error"]
+    dlq = json.loads(producer.records[0][2])
+    assert stored_error == failure_error == dlq["error"]
+    assert dlq["attempts"] == 1
+    assert "SQLSTATE 42703" in stored_error
+    assert "run database migrations" in stored_error
+    assert "not retrying" in caplog.text
+    for unsafe_value in (
+        "INSERT INTO",
+        "PRIVATE_ACTIVITY_PAYLOAD",
+        "PRIVATE_DATABASE_DETAIL",
+    ):
+        assert unsafe_value not in stored_error
+        assert unsafe_value not in caplog.text
+        assert unsafe_value.encode() not in producer.records[0][2]
+
+
+def test_database_schema_error_is_not_retried() -> None:
+    processor = FakeProcessor(DatabaseSchemaError("Run the migrate service."))
+    worker, consumer, producer, repository, sleeps = make_worker(processor, attempts=4)
+    message = FakeMessage(event_bytes())
+
+    worker.handle_message(message)  # type: ignore[arg-type]
+
+    assert processor.calls == 1
+    assert sleeps == []
+    assert consumer.commits == [message]
+    assert repository.failed_syncs[0][1] == (
+        "DatabaseSchemaError: Run the migrate service."
+    )
+    assert json.loads(producer.records[0][2])["error"] == repository.failed_syncs[0][1]
+
+
+def test_safe_error_summary_retains_only_allowlisted_messages() -> None:
+    assert safe_error_summary(IntervalsPayloadError("invalid activity detail for i123")) == (
+        "IntervalsPayloadError: invalid activity detail for i123"
+    )
+    assert safe_error_summary(RuntimeError("INTERVALS_API_KEY=must-not-leak")) == "RuntimeError"
