@@ -1,15 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ActivityPage, ActivitySummary } from "@vatove/contracts";
+import type { ActivitySummary } from "@vatove/contracts";
 import { listActivities } from "../api/client";
 
 interface ActivityFeedState {
   activities: ActivitySummary[];
   loading: boolean;
-  loadingMore: boolean;
   error: string | null;
-  nextCursor: string | null;
   refresh: () => Promise<void>;
-  loadMore: () => Promise<void>;
 }
 
 function errorMessage(error: unknown): string {
@@ -18,9 +15,7 @@ function errorMessage(error: unknown): string {
 
 export function useActivityFeed(): ActivityFeedState {
   const [activities, setActivities] = useState<ActivitySummary[]>([]);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef<AbortController | null>(null);
 
@@ -31,9 +26,27 @@ export function useActivityFeed(): ActivityFeedState {
     setLoading(true);
     setError(null);
     try {
-      const page = await listActivities({ signal: controller.signal });
-      setActivities(page.items);
-      setNextCursor(page.nextCursor);
+      const allActivities: ActivitySummary[] = [];
+      const knownIds = new Set<string>();
+      const seenCursors = new Set<string>();
+      let cursor: string | undefined;
+      do {
+        const page = await listActivities({
+          ...(cursor ? { cursor } : {}),
+          limit: 100,
+          signal: controller.signal,
+        });
+        for (const activity of page.items) {
+          if (!knownIds.has(activity.id)) {
+            knownIds.add(activity.id);
+            allActivities.push(activity);
+          }
+        }
+        setActivities([...allActivities]);
+        if (!page.nextCursor || seenCursors.has(page.nextCursor)) break;
+        seenCursors.add(page.nextCursor);
+        cursor = page.nextCursor;
+      } while (!controller.signal.aborted);
     } catch (caught) {
       if (!controller.signal.aborted) setError(errorMessage(caught));
     } finally {
@@ -41,28 +54,10 @@ export function useActivityFeed(): ActivityFeedState {
     }
   }, []);
 
-  const loadMore = useCallback(async () => {
-    if (!nextCursor || loadingMore) return;
-    setLoadingMore(true);
-    setError(null);
-    try {
-      const page: ActivityPage = await listActivities({ cursor: nextCursor });
-      setActivities((current) => {
-        const known = new Set(current.map((activity) => activity.id));
-        return [...current, ...page.items.filter((activity) => !known.has(activity.id))];
-      });
-      setNextCursor(page.nextCursor);
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [loadingMore, nextCursor]);
-
   useEffect(() => {
     void refresh();
     return () => requestRef.current?.abort();
   }, [refresh]);
 
-  return { activities, loading, loadingMore, error, nextCursor, refresh, loadMore };
+  return { activities, loading, error, refresh };
 }

@@ -1,6 +1,7 @@
 import type {
   ActivityDetail,
   ActivityPage,
+  ActivityRouteCollection,
   CreateSyncRun,
   SyncRun,
 } from "@vatove/contracts";
@@ -48,15 +49,33 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export function listActivities(options: {
   cursor?: string;
   limit?: number;
+  oldest?: string;
+  newest?: string;
   signal?: AbortSignal;
 } = {}): Promise<ActivityPage> {
   const params = new URLSearchParams();
   params.set("limit", String(options.limit ?? 30));
   if (options.cursor) params.set("cursor", options.cursor);
+  if (options.oldest) params.set("oldest", options.oldest);
+  if (options.newest) params.set("newest", options.newest);
 
   const init: RequestInit = {};
   if (options.signal) init.signal = options.signal;
   return request<ActivityPage>(`/activities?${params.toString()}`, init);
+}
+
+export function getActivityRoutes(options: {
+  oldest?: string;
+  newest?: string;
+  signal?: AbortSignal;
+} = {}): Promise<ActivityRouteCollection> {
+  const params = new URLSearchParams();
+  if (options.oldest) params.set("oldest", options.oldest);
+  if (options.newest) params.set("newest", options.newest);
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  const init: RequestInit = {};
+  if (options.signal) init.signal = options.signal;
+  return request<ActivityRouteCollection>(`/activity-routes${query}`, init);
 }
 
 export function getActivity(id: string, signal?: AbortSignal): Promise<ActivityDetail> {

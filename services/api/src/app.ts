@@ -4,7 +4,7 @@ import { createSyncRunSchema } from "@vatove/contracts";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 
-import { resolveSyncDateRange } from "./dates.js";
+import { resolveActivityDateRange, resolveSyncDateRange } from "./dates.js";
 import type { ReadinessChecker } from "./health.js";
 import type { Logger } from "./logger.js";
 import { HttpProblem, notFound, problemHandler } from "./problems.js";
@@ -23,6 +23,13 @@ const idSchema = z.string().uuid();
 const listActivitiesSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(30),
   cursor: z.string().min(1).optional(),
+  oldest: z.string().min(1).optional(),
+  newest: z.string().min(1).optional(),
+});
+
+const activityRoutesSchema = z.object({
+  oldest: z.string().min(1).optional(),
+  newest: z.string().min(1).optional(),
 });
 
 type AsyncRequestHandler = (
@@ -100,8 +107,31 @@ export function createApp(dependencies: AppDependencies): express.Express {
           parsed.error.issues[0]?.message ?? "The pagination parameters are invalid.",
         );
       }
-      const page = await dependencies.activities.list(parsed.data.limit, parsed.data.cursor);
+      const range = resolveActivityDateRange(parsed.data, clock(), dependencies.appTimezone);
+      const page = await dependencies.activities.list(
+        parsed.data.limit,
+        parsed.data.cursor,
+        range,
+        dependencies.appTimezone,
+      );
       response.json(page);
+    }),
+  );
+
+  app.get(
+    "/api/v1/activity-routes",
+    asyncHandler(async (request, response) => {
+      const parsed = activityRoutesSchema.safeParse(request.query);
+      if (!parsed.success) {
+        throw new HttpProblem(
+          400,
+          "Invalid route query",
+          parsed.error.issues[0]?.message ?? "The route query parameters are invalid.",
+        );
+      }
+      const range = resolveActivityDateRange(parsed.data, clock(), dependencies.appTimezone);
+      const routes = await dependencies.activities.listRoutes(range, dependencies.appTimezone);
+      response.type("application/geo+json").json(routes);
     }),
   );
 

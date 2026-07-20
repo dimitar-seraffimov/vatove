@@ -1,8 +1,13 @@
-# Vatove
+# vatove
 
-Vatove is a local-first geospatial biometric PWA. Its first vertical slice imports a
-single athlete's Intervals.icu activities through a REST/Kafka/Python/PostGIS pipeline
-and displays heart-rate zones on a synchronized MapLibre route and D3 elevation chart.
+vatove is a fun mostly vibe-coded project.
+Decided to try how much agents have improved in building complex applications. I want to improve
+how outdoor activities are displayed for athletes to analyse, started the project with 
+my personal Intervals.icu activities as initial data. 
+
+The goal is to have a global map with all activities (starting with the past 60 days) 
+displayed on the map for analysis. Each activity can be selected and analysed with all 
+training data provided from the Intervals.icu API.
 
 ## Prerequisites
 

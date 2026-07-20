@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from vatove_worker.intervals import (
+    ACTIVITY_FIELDS,
     IntervalsAuthenticationError,
     IntervalsClient,
     IntervalsPayloadError,
@@ -16,7 +17,7 @@ from vatove_worker.intervals import (
     parse_map_payload,
     retry_after_seconds,
 )
-from vatove_worker.schemas import IntervalsStream
+from vatove_worker.schemas import IntervalsActivity, IntervalsStream
 
 
 class FakeTime:
@@ -37,6 +38,7 @@ def make_client(
     fake_time: FakeTime,
     *,
     retries: int = 1,
+    athlete_id: str = "0",
 ) -> IntervalsClient:
     transport = httpx.MockTransport(handler)
     http_client = httpx.Client(
@@ -49,6 +51,7 @@ def make_client(
         base_url="https://intervals.example",
         api_key="secret-key",
         user_agent="Mozilla/5.0 vatove-test",
+        athlete_id=athlete_id,
         requests_per_second=8,
         max_retries=retries,
         client=http_client,
@@ -99,6 +102,71 @@ def test_fetch_activity_allows_an_activity_without_a_route(fixture_json: Any) ->
     fetched = make_client(handler, FakeTime()).fetch_activity("i9001")
 
     assert fetched.map_points == []
+
+
+def test_athlete_requests_use_configured_id_and_complete_projection(fixture_json: Any) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/sport-settings"):
+            return httpx.Response(200, json=fixture_json("sport_settings.json"))
+        return httpx.Response(200, json=fixture_json("activities.json"))
+
+    client = make_client(handler, FakeTime(), athlete_id="athlete@example.com")
+    settings = client.fetch_sport_settings()
+    activities = client.list_activities(date(2026, 5, 22), date(2026, 7, 20))
+
+    assert settings[0].types == ["Ride", "VirtualRide"]
+    assert settings[0].model_extra == {"future_field": "ignored"}
+    assert activities[0].average_heartrate == 146.2
+    assert [request.url.path for request in requests] == [
+        "/api/v1/athlete/athlete@example.com/sport-settings",
+        "/api/v1/athlete/athlete@example.com/activities",
+    ]
+    assert dict(requests[-1].url.params) == {
+        "oldest": "2026-05-22",
+        "newest": "2026-07-20",
+        "fields": ACTIVITY_FIELDS,
+    }
+
+
+def test_analysis_boundaries_tolerate_invalid_optional_values() -> None:
+    activity = IntervalsActivity.model_validate(
+        {
+            "id": "i1",
+            "type": "Run",
+            "start_date": "2026-07-20T10:00:00Z",
+            "average_heartrate": "not-a-number",
+            "max_heartrate": False,
+            "icu_hr_zone_times": "not-an-array",
+        }
+    )
+
+    assert activity.average_heartrate is None
+    assert activity.max_heartrate is None
+    assert activity.icu_hr_zone_times is None
+
+
+def test_sport_settings_boundary_tolerates_null_arrays() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "types": None,
+                    "hr_zones": None,
+                    "hr_zone_names": "not-an-array",
+                    "other": True,
+                }
+            ],
+        )
+
+    setting = make_client(handler, FakeTime()).fetch_sport_settings()[0]
+
+    assert setting.types == []
+    assert setting.hr_zones == []
+    assert setting.hr_zone_names == []
 
 
 def test_latlng_stream_requires_paired_longitudes() -> None:

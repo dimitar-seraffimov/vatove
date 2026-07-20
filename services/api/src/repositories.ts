@@ -4,6 +4,7 @@ import {
   ingestionEventV1Schema,
   type ActivityDetail,
   type ActivityPage,
+  type ActivityRouteCollection,
   type ActivitySample,
   type ActivitySummary,
   type GeoJsonLineStringFeature,
@@ -47,9 +48,16 @@ interface ActivityRow extends QueryResultRow {
 }
 
 interface ActivityDetailRow extends ActivityRow {
+  average_heart_rate_bpm: number | null;
+  max_heart_rate_bpm: number | null;
   route_geometry: { type: "LineString"; coordinates: [number, number][] } | string | null;
   samples: ActivitySample[] | string | null;
   heart_rate_zones: HeartRateZone[] | string | null;
+}
+
+interface ActivityRouteRow extends QueryResultRow {
+  id: string;
+  route_geometry: { type: "LineString"; coordinates: [number, number][] } | string;
 }
 
 export interface SyncRunsStore {
@@ -58,7 +66,13 @@ export interface SyncRunsStore {
 }
 
 export interface ActivitiesStore {
-  list(limit: number, cursor: string | undefined): Promise<ActivityPage>;
+  list(
+    limit: number,
+    cursor: string | undefined,
+    range: SyncDateRange,
+    timeZone: string,
+  ): Promise<ActivityPage>;
+  listRoutes(range: SyncDateRange, timeZone: string): Promise<ActivityRouteCollection>;
   findById(id: string): Promise<ActivityDetail | null>;
 }
 
@@ -179,17 +193,31 @@ const ACTIVITY_SUMMARY_COLUMNS = `
 export class PostgresActivitiesStore implements ActivitiesStore {
   constructor(private readonly pool: Pool) {}
 
-  async list(limit: number, encodedCursor: string | undefined): Promise<ActivityPage> {
+  async list(
+    limit: number,
+    encodedCursor: string | undefined,
+    range: SyncDateRange,
+    timeZone: string,
+  ): Promise<ActivityPage> {
     const cursor = encodedCursor ? decodeActivityCursor(encodedCursor) : null;
     const result = await this.pool.query<ActivityRow>(
       `
         SELECT ${ACTIVITY_SUMMARY_COLUMNS}
         FROM activities a
-        WHERE ($1::timestamptz IS NULL OR (a.start_at, a.id) < ($1::timestamptz, $2::uuid))
+        WHERE a.start_at >= (($1::date)::timestamp AT TIME ZONE $3)
+          AND a.start_at < ((($2::date + 1))::timestamp AT TIME ZONE $3)
+          AND ($4::timestamptz IS NULL OR (a.start_at, a.id) < ($4::timestamptz, $5::uuid))
         ORDER BY a.start_at DESC, a.id DESC
-        LIMIT $3
+        LIMIT $6
       `,
-      [cursor?.startAt ?? null, cursor?.id ?? null, limit + 1],
+      [
+        range.oldest,
+        range.newest,
+        timeZone,
+        cursor?.startAt ?? null,
+        cursor?.id ?? null,
+        limit + 1,
+      ],
     );
 
     const hasNextPage = result.rows.length > limit;
@@ -201,10 +229,48 @@ export class PostgresActivitiesStore implements ActivitiesStore {
     };
   }
 
+  async listRoutes(range: SyncDateRange, timeZone: string): Promise<ActivityRouteCollection> {
+    const result = await this.pool.query<ActivityRouteRow>(
+      `
+        SELECT a.id,
+               ST_AsGeoJSON(
+                 ST_Transform(
+                   ST_SimplifyPreserveTopology(ST_Transform(a.route, 3857), 5),
+                   4326
+                 ),
+                 7
+               )::jsonb AS route_geometry
+        FROM activities a
+        WHERE a.route IS NOT NULL
+          AND a.start_at >= (($1::date)::timestamp AT TIME ZONE $3)
+          AND a.start_at < ((($2::date + 1))::timestamp AT TIME ZONE $3)
+        ORDER BY a.start_at DESC, a.id DESC
+      `,
+      [range.oldest, range.newest, timeZone],
+    );
+
+    return {
+      type: "FeatureCollection",
+      features: result.rows.flatMap((row) => {
+        const geometry = parseJson(row.route_geometry);
+        if (!isLineStringGeometry(geometry)) return [];
+        return [
+          {
+            type: "Feature" as const,
+            geometry,
+            properties: { activityId: row.id },
+          },
+        ];
+      }),
+    };
+  }
+
   async findById(id: string): Promise<ActivityDetail | null> {
     const result = await this.pool.query<ActivityDetailRow>(
       `
         SELECT ${ACTIVITY_SUMMARY_COLUMNS},
+               a.average_heart_rate_bpm,
+               a.max_heart_rate_bpm,
                ST_AsGeoJSON(a.route, 7)::jsonb AS route_geometry,
                a.samples,
                a.heart_rate_zones
@@ -220,6 +286,8 @@ export class PostgresActivitiesStore implements ActivitiesStore {
     const geometry = parseJson(row.route_geometry);
     return {
       ...summary,
+      averageHeartRateBpm: nullableNumber(row.average_heart_rate_bpm),
+      maxHeartRateBpm: nullableNumber(row.max_heart_rate_bpm),
       route: geometry
         ? {
             type: "Feature",
@@ -228,7 +296,7 @@ export class PostgresActivitiesStore implements ActivitiesStore {
           }
         : null,
       samples: asArray<ActivitySample>(row.samples),
-      heartRateZones: asArray<HeartRateZone>(row.heart_rate_zones),
+      heartRateZones: normalizeHeartRateZones(row.heart_rate_zones),
     };
   }
 }
@@ -277,6 +345,46 @@ function parseJson(value: unknown): unknown {
 function asArray<T>(value: unknown): T[] {
   const parsed = parseJson(value);
   return Array.isArray(parsed) ? (parsed as T[]) : [];
+}
+
+function nullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isLineStringGeometry(value: unknown): value is GeoJsonLineStringFeature["geometry"] {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as { type?: unknown; coordinates?: unknown };
+  return candidate.type === "LineString" && Array.isArray(candidate.coordinates);
+}
+
+function normalizeHeartRateZones(value: unknown): HeartRateZone[] {
+  return asArray<Record<string, unknown>>(value).flatMap((zone) => {
+    if (
+      typeof zone.index !== "number" ||
+      typeof zone.label !== "string" ||
+      typeof zone.color !== "string"
+    ) {
+      return [];
+    }
+
+    return [
+      {
+        index: zone.index,
+        label: zone.label,
+        color: zone.color,
+        minBpm: typeof zone.minBpm === "number" ? zone.minBpm : null,
+        maxBpm: typeof zone.maxBpm === "number" ? zone.maxBpm : null,
+        durationSeconds:
+          typeof zone.durationSeconds === "number" &&
+          Number.isFinite(zone.durationSeconds) &&
+          zone.durationSeconds >= 0
+            ? zone.durationSeconds
+            : null,
+      },
+    ];
+  });
 }
 
 export function sanitizeWorkerError(value: string | null): string | null {

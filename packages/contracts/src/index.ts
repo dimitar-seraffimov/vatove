@@ -35,6 +35,7 @@ export interface HeartRateZone {
   color: string;
   minBpm: number | null;
   maxBpm: number | null;
+  durationSeconds: number | null;
 }
 
 export interface ActivitySample {
@@ -75,9 +76,16 @@ export interface ActivitySummary {
 }
 
 export interface ActivityDetail extends ActivitySummary {
+  averageHeartRateBpm: number | null;
+  maxHeartRateBpm: number | null;
   route: GeoJsonLineStringFeature | null;
   samples: ActivitySample[];
   heartRateZones: HeartRateZone[];
+}
+
+export interface ActivityRouteCollection {
+  type: "FeatureCollection";
+  features: GeoJsonLineStringFeature[];
 }
 
 export interface ActivityPage {
@@ -99,4 +107,3 @@ export const ingestionEventV1Schema = z.object({
 });
 
 export type IngestionEventV1 = z.infer<typeof ingestionEventV1Schema>;
-

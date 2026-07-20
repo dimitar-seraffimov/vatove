@@ -1,4 +1,9 @@
-import type { ActivityDetail, ActivityPage, SyncRun } from "@vatove/contracts";
+import type {
+  ActivityDetail,
+  ActivityPage,
+  ActivityRouteCollection,
+  SyncRun,
+} from "@vatove/contracts";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 
@@ -10,7 +15,7 @@ import type { ActivitiesStore, SyncRunsStore } from "./repositories.js";
 const syncRun: SyncRun = {
   id: "0a02e7b4-5b09-45bb-aafb-9a4597d3a0bb",
   status: "queued",
-  oldest: "2026-06-21",
+  oldest: "2026-05-22",
   newest: "2026-07-20",
   discoveredCount: 0,
   processedCount: 0,
@@ -34,6 +39,9 @@ function testApp(options: { ready?: boolean; activity?: ActivityDetail | null } 
   };
   const activities: ActivitiesStore = {
     list: vi.fn(async (): Promise<ActivityPage> => ({ items: [], nextCursor: null })),
+    listRoutes: vi.fn(
+      async (): Promise<ActivityRouteCollection> => ({ type: "FeatureCollection", features: [] }),
+    ),
     findById: vi.fn(async () => options.activity ?? null),
   };
   const readiness: ReadinessChecker = {
@@ -60,7 +68,7 @@ describe("REST API", () => {
 
     expect(response.body).toEqual(syncRun);
     expect(syncRuns.create).toHaveBeenCalledWith({
-      oldest: "2026-06-21",
+      oldest: "2026-05-22",
       newest: "2026-07-20",
     });
     expect(response.headers["cache-control"]).toBe("no-store");
@@ -88,7 +96,45 @@ describe("REST API", () => {
   it("applies the documented pagination default", async () => {
     const { app, activities } = testApp();
     await request(app).get("/api/v1/activities?cursor=abc").expect(200);
-    expect(activities.list).toHaveBeenCalledWith(30, "abc");
+    expect(activities.list).toHaveBeenCalledWith(
+      30,
+      "abc",
+      { oldest: "2026-05-22", newest: "2026-07-20" },
+      "Europe/London",
+    );
+  });
+
+  it("passes an explicit local-date window to the activity store", async () => {
+    const { app, activities } = testApp();
+    await request(app)
+      .get("/api/v1/activities?oldest=2026-06-01&newest=2026-06-30&limit=50")
+      .expect(200);
+    expect(activities.list).toHaveBeenCalledWith(
+      50,
+      undefined,
+      { oldest: "2026-06-01", newest: "2026-06-30" },
+      "Europe/London",
+    );
+  });
+
+  it("rejects an incomplete activity date window", async () => {
+    const { app, activities } = testApp();
+    const response = await request(app)
+      .get("/api/v1/activities?oldest=2026-06-01")
+      .expect(400);
+    expect(response.body).toMatchObject({ title: "Invalid date range", status: 400 });
+    expect(activities.list).not.toHaveBeenCalled();
+  });
+
+  it("returns all simplified routes for the default activity window", async () => {
+    const { app, activities } = testApp();
+    const response = await request(app).get("/api/v1/activity-routes").expect(200);
+    expect(response.headers["content-type"]).toMatch(/^application\/geo\+json/);
+    expect(response.body).toEqual({ type: "FeatureCollection", features: [] });
+    expect(activities.listRoutes).toHaveBeenCalledWith(
+      { oldest: "2026-05-22", newest: "2026-07-20" },
+      "Europe/London",
+    );
   });
 
   it("does not pass malformed identifiers to PostgreSQL", async () => {

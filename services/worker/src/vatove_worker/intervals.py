@@ -9,13 +9,35 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from pydantic import TypeAdapter, ValidationError
 
-from vatove_worker.schemas import IntervalsActivity, IntervalsStream, MapPoint
+from vatove_worker.schemas import (
+    IntervalsActivity,
+    IntervalsSportSettings,
+    IntervalsStream,
+    MapPoint,
+)
 
 logger = logging.getLogger(__name__)
+
+ACTIVITY_FIELDS = ",".join(
+    (
+        "id",
+        "name",
+        "type",
+        "start_date",
+        "start_date_local",
+        "moving_time",
+        "distance",
+        "updated",
+        "average_heartrate",
+        "max_heartrate",
+        "icu_hr_zone_times",
+    )
+)
 
 
 class IntervalsError(RuntimeError):
@@ -75,6 +97,7 @@ class IntervalsClient:
         base_url: str,
         api_key: str,
         user_agent: str,
+        athlete_id: str = "0",
         requests_per_second: float = 8.0,
         timeout_seconds: float = 30.0,
         max_retries: int = 4,
@@ -88,6 +111,9 @@ class IntervalsClient:
             raise ValueError("requests_per_second must be greater than 0 and below 10")
         self._sleep = sleep
         self._max_retries = max_retries
+        self._athlete_id = quote(athlete_id.strip(), safe="")
+        if not self._athlete_id:
+            raise ValueError("athlete_id must not be empty")
         self._limiter = _RateLimiter(requests_per_second, clock=clock, sleep=sleep)
         self._owns_client = client is None
         self._client = client or httpx.Client(
@@ -113,13 +139,24 @@ class IntervalsClient:
 
     def list_activities(self, oldest: date, newest: date) -> list[IntervalsActivity]:
         payload = self._get_json(
-            "/api/v1/athlete/0/activities",
-            params={"oldest": oldest.isoformat(), "newest": newest.isoformat()},
+            f"/api/v1/athlete/{self._athlete_id}/activities",
+            params={
+                "oldest": oldest.isoformat(),
+                "newest": newest.isoformat(),
+                "fields": ACTIVITY_FIELDS,
+            },
         )
         try:
             return TypeAdapter(list[IntervalsActivity]).validate_python(payload)
         except ValidationError as error:
             raise IntervalsPayloadError("invalid activity-list payload") from error
+
+    def fetch_sport_settings(self) -> list[IntervalsSportSettings]:
+        payload = self._get_json(f"/api/v1/athlete/{self._athlete_id}/sport-settings")
+        try:
+            return TypeAdapter(list[IntervalsSportSettings]).validate_python(payload)
+        except ValidationError as error:
+            raise IntervalsPayloadError("invalid sport-settings payload") from error
 
     def fetch_activity(self, activity_id: str) -> FetchedActivity:
         raw_activity = self._get_json(f"/api/v1/activity/{activity_id}")

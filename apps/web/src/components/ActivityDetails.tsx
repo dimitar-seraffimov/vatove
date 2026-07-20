@@ -7,9 +7,14 @@ import {
   formatDistance,
   formatDuration,
 } from "../utils/format";
+import { formatZoneRange, summarizeZoneTiming } from "./heartRateAnalysis";
 
 export interface ActivityDetailsProps {
   activity: ActivityDetailType;
+}
+
+function formatHeartRate(value: number | null): string {
+  return value !== null && Number.isFinite(value) ? `${Math.round(value)} bpm` : "—";
 }
 
 export function ActivityDetails({ activity }: ActivityDetailsProps) {
@@ -18,6 +23,7 @@ export function ActivityDetails({ activity }: ActivityDetailsProps) {
   const activeZone = activity.heartRateZones.find(
     (zone) => zone.index === activeSample?.heartRateZone,
   );
+  const zoneTiming = summarizeZoneTiming(activity.heartRateZones);
 
   return (
     <section className="activity-detail" aria-label={`${activity.name} details`}>
@@ -48,20 +54,60 @@ export function ActivityDetails({ activity }: ActivityDetailsProps) {
           <dd>{formatDuration(activity.movingTimeSeconds)}</dd>
         </div>
         <div>
-          <dt>Route samples</dt>
-          <dd>{activity.samples.length.toLocaleString()}</dd>
+          <dt>Average HR</dt>
+          <dd>{formatHeartRate(activity.averageHeartRateBpm)}</dd>
+        </div>
+        <div>
+          <dt>Maximum HR</dt>
+          <dd>{formatHeartRate(activity.maxHeartRateBpm)}</dd>
         </div>
       </dl>
 
-      {activity.hasHeartRate && activity.heartRateZones.length > 0 && (
-        <div className="zone-legend" aria-label="Heart-rate zones">
-          {activity.heartRateZones.map((zone) => (
-            <span key={zone.index}>
-              <i style={{ backgroundColor: zone.color }} />
-              {zone.label}
-            </span>
-          ))}
-        </div>
+      {activity.heartRateZones.length > 0 && (
+        <section className="zone-analysis" aria-labelledby="zone-analysis-title">
+          <div className="zone-heading">
+            <div>
+              <span className="eyebrow">Dynamic sport zones</span>
+              <h2 id="zone-analysis-title">Time in zone</h2>
+            </div>
+            {zoneTiming.totalSeconds > 0 && <span>{formatDuration(zoneTiming.totalSeconds)}</span>}
+          </div>
+
+          {zoneTiming.hasTiming ? (
+            <>
+              <div className="zone-bar" aria-hidden="true">
+                {zoneTiming.entries.filter((entry) => entry.seconds !== null).map(({ zone, percentage }) => (
+                  <i
+                    key={zone.index}
+                    style={{
+                      backgroundColor: zone.color,
+                      width: `${percentage ?? 0}%`,
+                    }}
+                  />
+                ))}
+              </div>
+              <div className="zone-list">
+                {zoneTiming.entries.map(({ zone, seconds, percentage }) => {
+                  return (
+                    <div key={zone.index} className="zone-row">
+                      <i style={{ backgroundColor: zone.color }} />
+                      <span>
+                        <strong>{zone.label}</strong>
+                        <small>{formatZoneRange(zone.minBpm, zone.maxBpm)}</small>
+                      </span>
+                      <span className="zone-duration">
+                        <strong>{formatDuration(seconds)}</strong>
+                        <small>{percentage === null ? "—" : `${percentage.toFixed(0)}%`}</small>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <p className="zone-unavailable">Time in zone was not available for this activity.</p>
+          )}
+        </section>
       )}
 
       {activeSample && (

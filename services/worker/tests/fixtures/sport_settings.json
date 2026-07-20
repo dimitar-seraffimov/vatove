@@ -1,0 +1,15 @@
+[
+  {
+    "types": ["Ride", "VirtualRide"],
+    "hr_zones": [120, 140, 160, 180],
+    "hr_zone_names": ["Recovery", "Endurance", "Tempo", "Threshold"],
+    "other": false,
+    "future_field": "ignored"
+  },
+  {
+    "types": [],
+    "hr_zones": [110, 130, 150],
+    "hr_zone_names": ["Easy", "Steady", "Hard"],
+    "other": true
+  }
+]

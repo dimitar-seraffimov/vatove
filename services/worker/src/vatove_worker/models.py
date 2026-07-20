@@ -9,6 +9,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -97,6 +98,8 @@ class Activity(Base):
     start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     moving_time_seconds: Mapped[int | None] = mapped_column(Integer)
     distance_meters: Mapped[float | None]
+    average_heart_rate_bpm: Mapped[float | None] = mapped_column(Float)
+    max_heart_rate_bpm: Mapped[float | None] = mapped_column(Float)
     route: Mapped[Any | None] = mapped_column(
         Geometry(geometry_type="LINESTRING", srid=4326, spatial_index=False)
     )
@@ -142,4 +145,3 @@ class IngestionFailure(Base):
 
 
 Index("ix_ingestion_failures_sync_run_id", IngestionFailure.sync_run_id)
-

@@ -5,8 +5,13 @@ from typing import Any
 from uuid import UUID
 
 from vatove_worker.intervals import FetchedActivity, parse_map_payload
-from vatove_worker.processor import SyncProcessor
-from vatove_worker.schemas import IngestionEventV1, IntervalsActivity, IntervalsStream
+from vatove_worker.processor import SyncProcessor, _merge_activity_analysis
+from vatove_worker.schemas import (
+    IngestionEventV1,
+    IntervalsActivity,
+    IntervalsSportSettings,
+    IntervalsStream,
+)
 
 
 class RecordingRepository:
@@ -36,6 +41,7 @@ class RecordingRepository:
 
 class FixtureSource:
     def __init__(self) -> None:
+        self.sport_settings_calls = 0
         self.summary = IntervalsActivity(
             id="i1",
             name="Run",
@@ -43,8 +49,20 @@ class FixtureSource:
             start_at=datetime(2026, 7, 20, tzinfo=UTC),
             moving_time=60,
             distance=100,
-            icu_hr_zones=[120, 150, 180],
+            average_heartrate=140,
+            max_heartrate=175,
+            icu_hr_zone_times=[10, 20, 30],
         )
+
+    def fetch_sport_settings(self) -> list[IntervalsSportSettings]:
+        self.sport_settings_calls += 1
+        return [
+            IntervalsSportSettings(
+                types=["Run"],
+                hr_zones=[120, 150, 180],
+                hr_zone_names=["Easy", "Steady", "Hard"],
+            )
+        ]
 
     def list_activities(self, oldest: date, newest: date) -> list[IntervalsActivity]:
         assert oldest <= newest
@@ -59,7 +77,6 @@ class FixtureSource:
                 "name": "Run",
                 "type": "Run",
                 "start_date": "2026-07-20T00:00:00Z",
-                "icu_hr_zones": [120, 150, 180],
             },
             parse_map_payload(
                 [
@@ -90,18 +107,63 @@ def make_event() -> IngestionEventV1:
 
 def test_processor_updates_counts_and_completes() -> None:
     repository = RecordingRepository()
-    processor = SyncProcessor(repository, FixtureSource())  # type: ignore[arg-type]
+    source = FixtureSource()
+    processor = SyncProcessor(repository, source)  # type: ignore[arg-type]
     processor.process(make_event())
     assert repository.discovered == 1
     assert repository.processed == 1
     assert repository.completed is True
     assert repository.activities[0].source_activity_id == "i1"
+    assert repository.activities[0].average_heart_rate_bpm == 140
+    assert repository.activities[0].max_heart_rate_bpm == 175
+    assert [zone.label for zone in repository.activities[0].heart_rate_zones] == [
+        "Easy",
+        "Steady",
+        "Hard",
+    ]
+    assert [zone.duration_seconds for zone in repository.activities[0].heart_rate_zones] == [
+        10,
+        20,
+        30,
+    ]
+    assert source.sport_settings_calls == 1
 
 
 def test_completed_redelivery_is_noop() -> None:
     repository = RecordingRepository(should_start=False)
-    processor = SyncProcessor(repository, FixtureSource())  # type: ignore[arg-type]
+    source = FixtureSource()
+    processor = SyncProcessor(repository, source)  # type: ignore[arg-type]
     processor.process(make_event())
     assert repository.discovered is None
     assert repository.activities == []
+    assert source.sport_settings_calls == 0
 
+
+def test_missing_projected_analysis_preserves_activity_detail_values() -> None:
+    source = FixtureSource()
+    fetched = source.fetch_activity("i1")
+    fetched = FetchedActivity(
+        fetched.activity.model_copy(
+            update={
+                "average_heartrate": 141,
+                "max_heartrate": 176,
+                "icu_hr_zone_times": [11, 22, 33],
+            }
+        ),
+        fetched.raw_activity,
+        fetched.map_points,
+        fetched.streams,
+    )
+    summary_without_analysis = source.summary.model_copy(
+        update={
+            "average_heartrate": None,
+            "max_heartrate": None,
+            "icu_hr_zone_times": None,
+        }
+    )
+
+    merged = _merge_activity_analysis(fetched, summary_without_analysis)
+
+    assert merged.activity.average_heartrate == 141
+    assert merged.activity.max_heartrate == 176
+    assert merged.activity.icu_hr_zone_times == [11, 22, 33]

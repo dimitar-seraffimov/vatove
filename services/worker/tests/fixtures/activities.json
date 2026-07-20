@@ -6,7 +6,9 @@
     "start_date": "2026-07-18T06:30:00Z",
     "moving_time": 3600,
     "distance": 24500.5,
+    "average_heartrate": 146.2,
+    "max_heartrate": 181,
+    "icu_hr_zone_times": [120, 480, 1380, 900],
     "icu_hr_zones": [120, 140, 160, 180]
   }
 ]
-

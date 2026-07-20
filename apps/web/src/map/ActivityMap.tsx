@@ -1,10 +1,11 @@
-import { useEffect, useRef } from "react";
-import type { ActivityDetail } from "@vatove/contracts";
-import type { FeatureCollection, LineString } from "geojson";
+import { useEffect, useMemo, useRef } from "react";
+import type { ActivityDetail, ActivityRouteCollection } from "@vatove/contracts";
+import type { Feature, FeatureCollection, LineString } from "geojson";
 import maplibregl, {
+  type FilterSpecification,
   type GeoJSONSource,
   type Map as MapLibreMap,
-  type MapLayerMouseEvent,
+  type MapMouseEvent,
   type Marker,
 } from "maplibre-gl";
 import { useTooltip } from "../context/TooltipContext";
@@ -12,122 +13,298 @@ import { buildHeartRateGradient } from "./heartRateGradient";
 import { useMap } from "./MapProvider";
 import { snapToSampleIndex } from "./snapToRoute";
 
-const ROUTE_SOURCE_ID = "active-activity-route";
-const ROUTE_LAYER_ID = "active-activity-route-line";
+const OVERVIEW_SOURCE_ID = "activity-route-overview";
+const OVERVIEW_LAYER_ID = "activity-route-overview-line";
+const OVERVIEW_SELECTED_LAYER_ID = "activity-route-selected-line";
+const OVERVIEW_HIT_LAYER_ID = "activity-route-hit-target";
+const ACTIVE_SOURCE_ID = "active-activity-route";
+const ACTIVE_LAYER_ID = "active-activity-route-line";
 
-const EMPTY_ROUTE: FeatureCollection<LineString> = {
+type RouteFeature = Feature<LineString, { activityId: string }>;
+type RouteCollection = FeatureCollection<LineString, { activityId: string }>;
+
+const EMPTY_ROUTES: RouteCollection = {
   type: "FeatureCollection",
   features: [],
 };
 
-function ensureRouteLayer(map: MapLibreMap, activity: ActivityDetail | null): void {
-  const routeData = activity?.route ?? EMPTY_ROUTE;
-  const gradient = buildHeartRateGradient(
-    activity?.samples ?? [],
-    activity?.heartRateZones ?? [],
-  );
-  const existingSource = map.getSource(ROUTE_SOURCE_ID) as GeoJSONSource | undefined;
-  if (existingSource) {
-    existingSource.setData(routeData);
+function prefersReducedMotion(): boolean {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function selectedFilter(selectedId: string | null): FilterSpecification {
+  return ["==", ["get", "activityId"], selectedId ?? ""];
+}
+
+function visibleOverlay(element: HTMLElement): boolean {
+  const style = window.getComputedStyle(element);
+  return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) > 0.05;
+}
+
+interface FitPadding {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+function fitPadding(container: HTMLElement): FitPadding {
+  const mapRect = container.getBoundingClientRect();
+  const padding: FitPadding = { top: 52, right: 52, bottom: 52, left: 52 };
+  const overlays = document.querySelectorAll<HTMLElement>("[data-map-overlay]");
+
+  for (const overlay of overlays) {
+    if (!visibleOverlay(overlay)) continue;
+    const rect = overlay.getBoundingClientRect();
+    const overlapsHorizontally = rect.right > mapRect.left && rect.left < mapRect.right;
+    const overlapsVertically = rect.bottom > mapRect.top && rect.top < mapRect.bottom;
+    if (!overlapsHorizontally || !overlapsVertically) continue;
+
+    const isBottomSheet = rect.width >= mapRect.width * 0.7 && rect.top >= mapRect.top + mapRect.height * 0.28;
+    if (isBottomSheet) {
+      padding.bottom = Math.max(padding.bottom, mapRect.bottom - rect.top + 24);
+    } else if (rect.left <= mapRect.left + 28 && rect.right < mapRect.left + mapRect.width * 0.65) {
+      padding.left = Math.max(padding.left, rect.right - mapRect.left + 24);
+    } else if (rect.right >= mapRect.right - 28 && rect.left > mapRect.left + mapRect.width * 0.35) {
+      padding.right = Math.max(padding.right, mapRect.right - rect.left + 24);
+    }
+  }
+
+  const horizontalLimit = Math.max(52, mapRect.width - 140);
+  if (padding.left + padding.right > horizontalLimit) {
+    const scale = horizontalLimit / (padding.left + padding.right);
+    padding.left *= scale;
+    padding.right *= scale;
+  }
+  const verticalLimit = Math.max(52, mapRect.height - 140);
+  if (padding.top + padding.bottom > verticalLimit) {
+    const scale = verticalLimit / (padding.top + padding.bottom);
+    padding.top *= scale;
+    padding.bottom *= scale;
+  }
+  return padding;
+}
+
+function routeBounds(features: readonly RouteFeature[]): maplibregl.LngLatBounds | null {
+  let first: [number, number] | null = null;
+  for (const feature of features) {
+    for (const coordinate of feature.geometry.coordinates) {
+      const longitude = coordinate[0];
+      const latitude = coordinate[1];
+      if (typeof longitude === "number" && typeof latitude === "number" && Number.isFinite(longitude) && Number.isFinite(latitude)) {
+        first = [longitude, latitude];
+        break;
+      }
+    }
+    if (first) break;
+  }
+  if (!first) return null;
+  const bounds = new maplibregl.LngLatBounds(first, first);
+  for (const feature of features) {
+    for (const coordinate of feature.geometry.coordinates) {
+      const longitude = coordinate[0];
+      const latitude = coordinate[1];
+      if (typeof longitude === "number" && typeof latitude === "number" && Number.isFinite(longitude) && Number.isFinite(latitude)) {
+        bounds.extend([longitude, latitude]);
+      }
+    }
+  }
+  return bounds;
+}
+
+function ensureSourcesAndLayers(
+  map: MapLibreMap,
+  routes: RouteCollection,
+  activity: ActivityDetail | null,
+  selectedId: string | null,
+): void {
+  if (!map.isStyleLoaded()) return;
+
+  const overviewSource = map.getSource(OVERVIEW_SOURCE_ID) as GeoJSONSource | undefined;
+  if (overviewSource) overviewSource.setData(routes);
+  else {
+    map.addSource(OVERVIEW_SOURCE_ID, { type: "geojson", data: routes });
+  }
+
+  if (!map.getLayer(OVERVIEW_LAYER_ID)) {
+    map.addLayer({
+      id: OVERVIEW_LAYER_ID,
+      type: "line",
+      source: OVERVIEW_SOURCE_ID,
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": "#304f45",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 3, 1.25, 12, 2.5, 18, 4],
+        "line-opacity": 0.58,
+      },
+    });
+  }
+  if (!map.getLayer(OVERVIEW_SELECTED_LAYER_ID)) {
+    map.addLayer({
+      id: OVERVIEW_SELECTED_LAYER_ID,
+      type: "line",
+      source: OVERVIEW_SOURCE_ID,
+      filter: selectedFilter(selectedId),
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": "#d9ff66",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 3, 3, 12, 7, 18, 11],
+        "line-opacity": 0.95,
+        "line-blur": 0.3,
+      },
+    });
   } else {
-    map.addSource(ROUTE_SOURCE_ID, {
+    map.setFilter(OVERVIEW_SELECTED_LAYER_ID, selectedFilter(selectedId));
+  }
+  if (!map.getLayer(OVERVIEW_HIT_LAYER_ID)) {
+    map.addLayer({
+      id: OVERVIEW_HIT_LAYER_ID,
+      type: "line",
+      source: OVERVIEW_SOURCE_ID,
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": "rgba(0, 0, 0, 0)", "line-width": 18 },
+    });
+  }
+
+  const selectedRoute = activity?.route ?? EMPTY_ROUTES;
+  const activeSource = map.getSource(ACTIVE_SOURCE_ID) as GeoJSONSource | undefined;
+  if (activeSource) activeSource.setData(selectedRoute);
+  else {
+    map.addSource(ACTIVE_SOURCE_ID, {
       type: "geojson",
-      data: routeData,
+      data: selectedRoute,
       lineMetrics: true,
     });
   }
 
-  if (!map.getLayer(ROUTE_LAYER_ID)) {
+  const gradient = buildHeartRateGradient(activity?.samples ?? [], activity?.heartRateZones ?? []);
+  if (!map.getLayer(ACTIVE_LAYER_ID)) {
     map.addLayer({
-      id: ROUTE_LAYER_ID,
+      id: ACTIVE_LAYER_ID,
       type: "line",
-      source: ROUTE_SOURCE_ID,
-      layout: {
-        "line-cap": "round",
-        "line-join": "round",
-      },
+      source: ACTIVE_SOURCE_ID,
+      layout: { "line-cap": "round", "line-join": "round" },
       paint: {
         "line-width": ["interpolate", ["linear"], ["zoom"], 3, 3, 12, 7, 18, 12],
-        "line-opacity": 0.96,
+        "line-opacity": 0.98,
         "line-gradient": gradient,
       },
     });
   } else {
-    map.setPaintProperty(ROUTE_LAYER_ID, "line-gradient", gradient);
+    map.setPaintProperty(ACTIVE_LAYER_ID, "line-gradient", gradient);
   }
-}
-
-function fitRoute(map: MapLibreMap, activity: ActivityDetail, duration: number): void {
-  const coordinates = activity.route?.geometry.coordinates;
-  if (!coordinates || coordinates.length < 2) return;
-  const first = coordinates[0];
-  if (!first) return;
-  const bounds = coordinates.reduce(
-    (current, coordinate) => current.extend(coordinate),
-    new maplibregl.LngLatBounds(first, first),
-  );
-  map.fitBounds(bounds, {
-    padding: { top: 72, right: 52, bottom: 72, left: 52 },
-    maxZoom: 15,
-    duration,
-  });
 }
 
 export interface ActivityMapProps {
   activity: ActivityDetail | null;
-  loading?: boolean;
+  routes: ActivityRouteCollection;
+  selectedId: string | null;
+  selectionRevision: number;
+  loadingDetail?: boolean;
+  loadingRoutes?: boolean;
+  routesError?: string | null;
+  onSelectActivity: (id: string) => void;
 }
 
-export function ActivityMap({ activity, loading = false }: ActivityMapProps) {
+export function ActivityMap({
+  activity,
+  routes,
+  selectedId,
+  selectionRevision,
+  loadingDetail = false,
+  loadingRoutes = false,
+  routesError = null,
+  onSelectActivity,
+}: ActivityMapProps) {
   const { map, styleRevision, containerRef, contextLost, initializationError } = useMap();
   const { activeSampleIndex, setActiveSampleIndex } = useTooltip();
   const markerRef = useRef<Marker | null>(null);
-  const hasFittedRouteRef = useRef(false);
+  const hasFittedOverviewRef = useRef(false);
+  const routeData = routes as RouteCollection;
+  const selectedActivity = activity?.id === selectedId ? activity : null;
+  const selectedOverviewRoute = useMemo(
+    () => routeData.features.find((feature) => feature.properties.activityId === selectedId) ?? null,
+    [routeData.features, selectedId],
+  );
+
+  useEffect(() => {
+    if (!map || styleRevision === 0 || !map.isStyleLoaded()) return;
+    ensureSourcesAndLayers(map, routeData, selectedActivity, selectedId);
+  }, [map, routeData, selectedActivity, selectedId, styleRevision]);
 
   useEffect(() => {
     if (!map || styleRevision === 0) return;
-    let eventsAttached = false;
-    const onRouteClick = (event: MapLayerMouseEvent) => {
-      if (!activity?.route) return;
-      const index = snapToSampleIndex(
-        activity.route.geometry.coordinates,
-        activity.samples,
-        [event.lngLat.lng, event.lngLat.lat],
-      );
-      setActiveSampleIndex(index);
+    const onMapClick = (event: MapMouseEvent) => {
+      if (!map.getLayer(OVERVIEW_HIT_LAYER_ID)) return;
+      const feature = map.queryRenderedFeatures(event.point, { layers: [OVERVIEW_HIT_LAYER_ID] })[0];
+      const activityId = feature?.properties?.activityId;
+      if (typeof activityId !== "string" || activityId.length === 0) return;
+      onSelectActivity(activityId);
+      if (activityId === selectedActivity?.id && selectedActivity.route) {
+        setActiveSampleIndex(
+          snapToSampleIndex(
+            selectedActivity.route.geometry.coordinates,
+            selectedActivity.samples,
+            [event.lngLat.lng, event.lngLat.lat],
+          ),
+        );
+      }
     };
-    const onRouteEnter = () => {
-      map.getCanvas().style.cursor = "crosshair";
+    const onMapMove = (event: MapMouseEvent) => {
+      if (!map.getLayer(OVERVIEW_HIT_LAYER_ID)) return;
+      const hoveringRoute = map.queryRenderedFeatures(event.point, {
+        layers: [OVERVIEW_HIT_LAYER_ID],
+      }).length > 0;
+      map.getCanvas().style.cursor = hoveringRoute ? "pointer" : "";
     };
-    const onRouteLeave = () => {
+    const clearCursor = () => {
       map.getCanvas().style.cursor = "";
     };
-    const applyActivity = () => {
-      ensureRouteLayer(map, activity);
-      map.on("click", ROUTE_LAYER_ID, onRouteClick);
-      map.on("mouseenter", ROUTE_LAYER_ID, onRouteEnter);
-      map.on("mouseleave", ROUTE_LAYER_ID, onRouteLeave);
-      eventsAttached = true;
-      if (activity?.route) {
-        fitRoute(map, activity, hasFittedRouteRef.current ? 500 : 0);
-        hasFittedRouteRef.current = true;
-      }
-    };
-
-    applyActivity();
-
+    map.on("click", onMapClick);
+    map.on("mousemove", onMapMove);
+    map.on("mouseout", clearCursor);
     return () => {
-      if (eventsAttached) {
-        map.off("click", ROUTE_LAYER_ID, onRouteClick);
-        map.off("mouseenter", ROUTE_LAYER_ID, onRouteEnter);
-        map.off("mouseleave", ROUTE_LAYER_ID, onRouteLeave);
-      }
+      map.off("click", onMapClick);
+      map.off("mousemove", onMapMove);
+      map.off("mouseout", clearCursor);
+      clearCursor();
     };
-  }, [activity, map, setActiveSampleIndex, styleRevision]);
+  }, [map, onSelectActivity, selectedActivity, setActiveSampleIndex, styleRevision]);
+
+  useEffect(() => {
+    if (!map || styleRevision === 0 || selectedId || hasFittedOverviewRef.current) return;
+    const bounds = routeBounds(routeData.features);
+    if (!bounds || !map.getContainer()) return;
+    map.fitBounds(bounds, {
+      padding: fitPadding(map.getContainer()),
+      maxZoom: 12,
+      duration: 0,
+    });
+    hasFittedOverviewRef.current = true;
+  }, [map, routeData.features, selectedId, styleRevision]);
+
+  useEffect(() => {
+    if (!map || styleRevision === 0 || !selectedId || !selectedOverviewRoute) return;
+    const bounds = routeBounds([selectedOverviewRoute]);
+    if (!bounds) return;
+    const fitSelectedRoute = () => {
+      map.fitBounds(bounds, {
+        padding: fitPadding(map.getContainer()),
+        maxZoom: 15,
+        duration: prefersReducedMotion() ? 0 : 500,
+      });
+    };
+    if (!window.matchMedia("(max-width: 999px)").matches) {
+      fitSelectedRoute();
+      return;
+    }
+    const timer = window.setTimeout(fitSelectedRoute, prefersReducedMotion() ? 0 : 260);
+    return () => window.clearTimeout(timer);
+  }, [map, selectedId, selectedOverviewRoute, selectionRevision, styleRevision]);
 
   useEffect(() => {
     if (!map || styleRevision === 0) return;
-    const sample = activity?.samples.find((item) => item.index === activeSampleIndex);
+    const sample = selectedActivity?.samples.find((item) => item.index === activeSampleIndex);
     if (!sample || !Number.isFinite(sample.longitude) || !Number.isFinite(sample.latitude)) {
       markerRef.current?.remove();
       markerRef.current = null;
@@ -137,14 +314,13 @@ export function ActivityMap({ activity, loading = false }: ActivityMapProps) {
       const markerElement = document.createElement("div");
       markerElement.className = "route-marker";
       markerElement.setAttribute("aria-hidden", "true");
-      markerRef.current = new maplibregl.Marker({ element: markerElement }).setLngLat([
-        sample.longitude,
-        sample.latitude,
-      ]).addTo(map);
+      markerRef.current = new maplibregl.Marker({ element: markerElement })
+        .setLngLat([sample.longitude, sample.latitude])
+        .addTo(map);
     } else {
       markerRef.current.setLngLat([sample.longitude, sample.latitude]);
     }
-  }, [activeSampleIndex, activity, map, styleRevision]);
+  }, [activeSampleIndex, map, selectedActivity, styleRevision]);
 
   useEffect(
     () => () => {
@@ -155,32 +331,53 @@ export function ActivityMap({ activity, loading = false }: ActivityMapProps) {
   );
 
   const mapLoading = styleRevision === 0 && initializationError === null;
-  const mapAvailable = !mapLoading && initializationError === null;
-  const noRoute = !loading && mapAvailable && activity !== null && !activity.route;
-  const noSelection = !loading && mapAvailable && activity === null;
+  const noRoutes = !loadingRoutes && !routesError && routeData.features.length === 0;
+  const noSelectedRoute = Boolean(
+    selectedId && !loadingDetail && selectedActivity && !selectedActivity.route,
+  );
+  const controlsDisabled = map === null || styleRevision === 0;
 
   return (
     <div className="map-shell" aria-label="Activity route map">
       <div ref={containerRef} className="map-canvas" />
-      {(loading || mapLoading) && (
-        <div className="map-overlay map-overlay--quiet">
-          {mapLoading ? "Loading map…" : "Loading route…"}
+
+      <div className="map-zoom-control" role="group" aria-label="Map zoom controls">
+        <button
+          type="button"
+          aria-label="Zoom in"
+          disabled={controlsDisabled}
+          onClick={() => map?.zoomIn({ duration: prefersReducedMotion() ? 0 : 250 })}
+        >
+          +
+        </button>
+        <button
+          type="button"
+          aria-label="Zoom out"
+          disabled={controlsDisabled}
+          onClick={() => map?.zoomOut({ duration: prefersReducedMotion() ? 0 : 250 })}
+        >
+          −
+        </button>
+      </div>
+
+      {(mapLoading || loadingRoutes) && (
+        <div className="map-status" role="status">
+          {mapLoading ? "Loading map…" : "Loading 60-day routes…"}
         </div>
       )}
-      {noSelection && (
-        <div className="map-overlay">
-          <span className="eyebrow">Your terrain awaits</span>
-          <strong>Select an activity to inspect its route.</strong>
+      {routesError && (
+        <div className="map-status map-status--error" role="alert">
+          Routes unavailable · {routesError}
         </div>
       )}
-      {noRoute && (
-        <div className="map-overlay">
-          <span className="eyebrow">List-only activity</span>
-          <strong>This activity has fewer than two valid GPS points.</strong>
-        </div>
+      {noRoutes && (
+        <div className="map-status">No GPS routes found in the latest 60 days.</div>
+      )}
+      {noSelectedRoute && (
+        <div className="map-status">No GPS route was recorded for this activity.</div>
       )}
       {contextLost && (
-        <div className="map-overlay map-overlay--error">
+        <div className="map-status map-status--error" role="alert">
           The graphics context was interrupted. The map will redraw when it recovers.
         </div>
       )}

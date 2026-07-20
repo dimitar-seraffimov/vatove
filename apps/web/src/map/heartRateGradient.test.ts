@@ -20,8 +20,8 @@ function sample(index: number, heartRateZone: number | null): ActivitySample {
 }
 
 const zones: HeartRateZone[] = [
-  { index: 1, label: "Easy", color: "#35a66f", minBpm: null, maxBpm: 139 },
-  { index: 2, label: "Tempo", color: "#f5a623", minBpm: 140, maxBpm: null },
+  { index: 1, label: "Easy", color: "#35a66f", minBpm: null, maxBpm: 139, durationSeconds: 120 },
+  { index: 2, label: "Tempo", color: "#f5a623", minBpm: 140, maxBpm: null, durationSeconds: 180 },
 ];
 
 describe("buildHeartRateGradient", () => {

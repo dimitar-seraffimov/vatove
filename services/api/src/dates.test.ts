@@ -3,14 +3,35 @@ import { describe, expect, it } from "vitest";
 import {
   calendarDateInTimeZone,
   isCalendarDate,
+  resolveActivityDateRange,
   resolveSyncDateRange,
 } from "./dates.js";
 
 describe("sync date ranges", () => {
-  it("defaults to the inclusive 30 calendar days ending today", () => {
+  it("defaults to the inclusive 60 calendar days ending today", () => {
     expect(
       resolveSyncDateRange({}, new Date("2026-07-20T12:00:00.000Z"), "Europe/London"),
-    ).toEqual({ oldest: "2026-06-21", newest: "2026-07-20" });
+    ).toEqual({ oldest: "2026-05-22", newest: "2026-07-20" });
+  });
+
+  it("requires activity range parameters to be supplied together", () => {
+    expect(() =>
+      resolveActivityDateRange(
+        { oldest: "2026-06-01" },
+        new Date("2026-07-20T12:00:00.000Z"),
+        "Europe/London",
+      ),
+    ).toThrow("oldest and newest must be supplied together");
+  });
+
+  it("uses the same 60-day default for activity queries", () => {
+    expect(
+      resolveActivityDateRange(
+        {},
+        new Date("2026-07-20T12:00:00.000Z"),
+        "Europe/London",
+      ),
+    ).toEqual({ oldest: "2026-05-22", newest: "2026-07-20" });
   });
 
   it("uses the configured timezone's calendar day", () => {

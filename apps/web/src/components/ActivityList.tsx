@@ -1,15 +1,14 @@
+import { useEffect, useRef } from "react";
 import type { ActivitySummary } from "@vatove/contracts";
 import { formatActivityDate, formatDistance, formatDuration } from "../utils/format";
 
 export interface ActivityListProps {
   activities: readonly ActivitySummary[];
   selectedId: string | null;
+  selectionRevision: number;
   loading: boolean;
-  loadingMore: boolean;
-  hasMore: boolean;
   error: string | null;
   onSelect: (id: string) => void;
-  onLoadMore: () => void;
   onRetry: () => void;
 }
 
@@ -35,16 +34,24 @@ function ActivitySkeleton() {
 export function ActivityList({
   activities,
   selectedId,
+  selectionRevision,
   loading,
-  loadingMore,
-  hasMore,
   error,
   onSelect,
-  onLoadMore,
   onRetry,
 }: ActivityListProps) {
+  const rowRefs = useRef(new Map<string, HTMLButtonElement>());
+
+  useEffect(() => {
+    if (!selectedId) return;
+    rowRefs.current.get(selectedId)?.scrollIntoView({
+      block: "nearest",
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    });
+  }, [selectedId, selectionRevision]);
+
   return (
-    <aside className="activity-panel" aria-label="Activities">
+    <section className="activity-panel" aria-label="Activities">
       <div className="panel-heading">
         <div>
           <span className="eyebrow">Intervals.icu</span>
@@ -71,13 +78,17 @@ export function ActivityList({
         {!loading && activities.length === 0 && !error && (
           <div className="empty-list">
             <strong>No activities yet.</strong>
-            <span>Sync your latest 30 days to begin exploring.</span>
+            <span>Sync your latest 60 days to begin exploring.</span>
           </div>
         )}
         {activities.map((activity) => (
           <button
             type="button"
             key={activity.id}
+            ref={(node) => {
+              if (node) rowRefs.current.set(activity.id, node);
+              else rowRefs.current.delete(activity.id);
+            }}
             className={`activity-row${selectedId === activity.id ? " is-selected" : ""}`}
             aria-current={selectedId === activity.id ? "true" : undefined}
             onClick={() => onSelect(activity.id)}
@@ -99,16 +110,11 @@ export function ActivityList({
         ))}
       </div>
 
-      {hasMore && (
-        <button
-          type="button"
-          className="load-more"
-          disabled={loadingMore}
-          onClick={onLoadMore}
-        >
-          {loadingMore ? "Loading…" : "Load older activities"}
-        </button>
+      {loading && activities.length > 0 && (
+        <div className="feed-progress" role="status">
+          Loading the complete 60-day window…
+        </div>
       )}
-    </aside>
+    </section>
   );
 }

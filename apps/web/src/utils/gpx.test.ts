@@ -15,6 +15,8 @@ function activity(): ActivityDetail {
     hasRoute: true,
     hasHeartRate: true,
     hasElevation: true,
+    averageHeartRateBpm: 145,
+    maxHeartRateBpm: 162,
     route: {
       type: "Feature",
       geometry: { type: "LineString", coordinates: [[-1.123456789, 52.987654321]] },

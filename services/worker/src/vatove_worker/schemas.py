@@ -54,6 +54,9 @@ class IntervalsActivity(BaseModel):
     start_at: datetime
     moving_time: int | None = None
     distance: float | None = None
+    average_heartrate: float | None = None
+    max_heartrate: float | None = None
+    icu_hr_zone_times: list[Any] | None = None
     icu_hr_zones: list[float] = Field(default_factory=list)
     source_updated_at: datetime | None = None
 
@@ -82,6 +85,21 @@ class IntervalsActivity(BaseModel):
             raise ValueError("activity id is required")
         return value
 
+    @field_validator("average_heartrate", "max_heartrate", mode="before")
+    @classmethod
+    def tolerate_invalid_heart_rate_analysis(cls, value: Any) -> float | None:
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @field_validator("icu_hr_zone_times", mode="before")
+    @classmethod
+    def tolerate_invalid_zone_times(cls, value: Any) -> list[Any] | None:
+        return value if isinstance(value, list) else None
+
     @field_validator("start_at", "source_updated_at")
     @classmethod
     def make_datetimes_aware(cls, value: datetime | None) -> datetime | None:
@@ -90,6 +108,22 @@ class IntervalsActivity(BaseModel):
         if value is not None and value.tzinfo is None:
             return value.replace(tzinfo=UTC)
         return value
+
+
+class IntervalsSportSettings(BaseModel):
+    """Permissive subset of an Intervals sport-settings entry."""
+
+    model_config = ConfigDict(extra="allow")
+
+    types: list[Any] = Field(default_factory=list)
+    hr_zones: list[Any] = Field(default_factory=list)
+    hr_zone_names: list[Any] = Field(default_factory=list)
+    other: bool = False
+
+    @field_validator("types", "hr_zones", "hr_zone_names", mode="before")
+    @classmethod
+    def tolerate_invalid_arrays(cls, value: Any) -> list[Any]:
+        return value if isinstance(value, list) else []
 
 
 class IntervalsStream(BaseModel):
@@ -143,6 +177,7 @@ class HeartRateZone(BaseModel):
     color: str
     min_bpm: float | None = Field(alias="minBpm")
     max_bpm: float | None = Field(alias="maxBpm")
+    duration_seconds: float | None = Field(alias="durationSeconds")
 
 
 class NormalizedActivity(BaseModel):
@@ -153,6 +188,8 @@ class NormalizedActivity(BaseModel):
     start_at: datetime
     moving_time_seconds: int | None
     distance_meters: float | None
+    average_heart_rate_bpm: float | None
+    max_heart_rate_bpm: float | None
     route_coordinates: list[tuple[float, float]]
     samples: list[NormalizedSample]
     heart_rate_zones: list[HeartRateZone]

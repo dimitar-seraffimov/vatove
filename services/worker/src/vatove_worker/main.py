@@ -29,6 +29,7 @@ def main() -> None:
     intervals = IntervalsClient(
         base_url=settings.intervals_api_base_url,
         api_key=settings.intervals_api_key.get_secret_value(),
+        athlete_id=settings.intervals_athlete_id,
         user_agent=settings.intervals_user_agent,
         requests_per_second=settings.intervals_requests_per_second,
         timeout_seconds=settings.intervals_timeout_seconds,
@@ -68,4 +69,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

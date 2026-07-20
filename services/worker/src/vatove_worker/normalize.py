@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import bisect
+import logging
 import math
+from collections.abc import Sequence
 from typing import Any
 
 from vatove_worker.intervals import FetchedActivity, IntervalsPayloadError
-from vatove_worker.schemas import HeartRateZone, NormalizedActivity, NormalizedSample
+from vatove_worker.schemas import (
+    HeartRateZone,
+    IntervalsSportSettings,
+    NormalizedActivity,
+    NormalizedSample,
+)
+
+logger = logging.getLogger(__name__)
 
 ZONE_COLORS = (
     "#3b82f6",
@@ -18,7 +27,9 @@ ZONE_COLORS = (
 )
 
 
-def normalize_activity(fetched: FetchedActivity) -> NormalizedActivity:
+def normalize_activity(
+    fetched: FetchedActivity, sport_settings: Sequence[IntervalsSportSettings] = ()
+) -> NormalizedActivity:
     streams: dict[str, list[Any]] = {}
     for stream in fetched.streams:
         if stream.type in streams:
@@ -53,8 +64,26 @@ def normalize_activity(fetched: FetchedActivity) -> NormalizedActivity:
             "map payload omitted source indices and cannot be safely aligned to streams"
         )
 
-    thresholds = _validated_thresholds(fetched.activity.icu_hr_zones)
-    zones = build_heart_rate_zones(thresholds)
+    setting = select_sport_settings(fetched.activity.sport, sport_settings)
+    thresholds: list[float] = []
+    labels: list[str] = []
+    if setting is not None:
+        try:
+            thresholds = _validated_thresholds(setting.hr_zones)
+        except IntervalsPayloadError as error:
+            logger.warning(
+                "Ignoring invalid heart-rate zones for activity %s (%s): %s",
+                fetched.activity.id,
+                fetched.activity.sport,
+                error,
+            )
+        else:
+            labels = _zone_labels(setting.hr_zone_names, len(thresholds))
+    zones = build_heart_rate_zones(
+        thresholds,
+        labels=labels,
+        durations=fetched.activity.icu_hr_zone_times,
+    )
     samples: list[NormalizedSample] = []
     route_coordinates: list[tuple[float, float]] = []
 
@@ -95,6 +124,12 @@ def normalize_activity(fetched: FetchedActivity) -> NormalizedActivity:
         start_at=activity.start_at,
         moving_time_seconds=activity.moving_time,
         distance_meters=activity.distance,
+        average_heart_rate_bpm=_valid_heart_rate(
+            activity.average_heartrate, "average_heartrate", activity.id
+        ),
+        max_heart_rate_bpm=_valid_heart_rate(
+            activity.max_heartrate, "max_heartrate", activity.id
+        ),
         route_coordinates=route_coordinates,
         samples=samples,
         heart_rate_zones=zones,
@@ -103,21 +138,65 @@ def normalize_activity(fetched: FetchedActivity) -> NormalizedActivity:
     )
 
 
-def build_heart_rate_zones(thresholds: list[float]) -> list[HeartRateZone]:
+def select_sport_settings(
+    sport: str, settings: Sequence[IntervalsSportSettings]
+) -> IntervalsSportSettings | None:
+    sport_key = sport.strip().casefold()
+    matches = [
+        setting
+        for setting in settings
+        if any(
+            isinstance(candidate, str) and candidate.strip().casefold() == sport_key
+            for candidate in setting.types
+        )
+    ]
+    if matches:
+        if len(matches) > 1:
+            logger.warning("Multiple Intervals sport settings match activity type %s", sport)
+        return matches[0]
+
+    fallbacks = [setting for setting in settings if setting.other]
+    if len(fallbacks) == 1:
+        return fallbacks[0]
+    if len(fallbacks) > 1:
+        logger.warning("Multiple Intervals sport settings are marked as other")
+    return None
+
+
+def build_heart_rate_zones(
+    thresholds: list[float],
+    *,
+    labels: Sequence[str] = (),
+    durations: Sequence[Any] | None = None,
+) -> list[HeartRateZone]:
     if not thresholds:
         return []
 
+    if durations is not None and len(durations) > len(thresholds):
+        logger.warning(
+            "Intervals returned %d heart-rate zone times for %d configured zones; "
+            "ignoring surplus values",
+            len(durations),
+            len(thresholds),
+        )
     zones: list[HeartRateZone] = []
     previous_max: float | None = None
-    for index, maximum in enumerate([*thresholds, None], start=1):
+    for index, maximum in enumerate(thresholds, start=1):
+        minimum = previous_max + 1 if previous_max is not None else None
+        duration = (
+            _valid_duration(durations[index - 1])
+            if durations is not None and index <= len(durations)
+            else None
+        )
         zones.append(
             HeartRateZone.model_validate(
                 {
                     "index": index,
-                    "label": f"Z{index}",
+                    "label": labels[index - 1] if index <= len(labels) else f"Z{index}",
                     "color": ZONE_COLORS[min(index - 1, len(ZONE_COLORS) - 1)],
-                    "minBpm": previous_max,
+                    "minBpm": minimum,
                     "maxBpm": maximum,
+                    "durationSeconds": duration,
                 }
             )
         )
@@ -128,21 +207,58 @@ def build_heart_rate_zones(thresholds: list[float]) -> list[HeartRateZone]:
 def heart_rate_zone(heart_rate: int | None, thresholds: list[float]) -> int | None:
     if heart_rate is None or not thresholds:
         return None
-    # The recorded values are boundaries. Equality enters the next zone and N boundaries define
-    # N+1 zones, with the final zone open-ended.
-    return bisect.bisect_right(thresholds, heart_rate) + 1
+    # Intervals returns one maximum per zone. Equality remains in that zone and values above the
+    # configured athlete maximum are clamped into the final zone.
+    return min(bisect.bisect_left(thresholds, heart_rate) + 1, len(thresholds))
 
 
-def _validated_thresholds(values: list[float]) -> list[float]:
+def _validated_thresholds(values: Sequence[Any]) -> list[float]:
     thresholds: list[float] = []
     for value in values:
-        numeric = float(value)
+        if isinstance(value, bool):
+            raise IntervalsPayloadError("heart-rate zone thresholds must be positive numbers")
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError) as error:
+            raise IntervalsPayloadError(
+                "heart-rate zone thresholds must be positive numbers"
+            ) from error
         if not math.isfinite(numeric) or numeric <= 0:
             raise IntervalsPayloadError("heart-rate zone thresholds must be positive numbers")
         if thresholds and numeric <= thresholds[-1]:
             raise IntervalsPayloadError("heart-rate zone thresholds must increase")
         thresholds.append(numeric)
     return thresholds
+
+
+def _zone_labels(values: Sequence[Any], zone_count: int) -> list[str]:
+    labels: list[str] = []
+    for index in range(zone_count):
+        value = values[index] if index < len(values) else None
+        label = value.strip() if isinstance(value, str) else ""
+        labels.append(label or f"Z{index + 1}")
+    return labels
+
+
+def _valid_duration(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    duration = float(value)
+    return duration if math.isfinite(duration) and duration >= 0 else None
+
+
+def _valid_heart_rate(value: Any, field: str, activity_id: str) -> float | None:
+    if value is None:
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        logger.warning("Ignoring invalid %s for activity %s", field, activity_id)
+        return None
+    if math.isfinite(numeric) and numeric > 0:
+        return numeric
+    logger.warning("Ignoring invalid %s for activity %s", field, activity_id)
+    return None
 
 
 def _stream_float(values: list[Any] | None, index: int, name: str) -> float | None:

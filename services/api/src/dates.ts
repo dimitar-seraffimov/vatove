@@ -7,6 +7,11 @@ export interface SyncDateRange {
   newest: string;
 }
 
+export interface OptionalDateRange {
+  oldest?: string | undefined;
+  newest?: string | undefined;
+}
+
 export function calendarDateInTimeZone(now: Date, timeZone: string): string {
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone,
@@ -47,14 +52,37 @@ export function resolveSyncDateRange(
 ): SyncDateRange {
   const today = calendarDateInTimeZone(now, timeZone);
   const newest = input.newest ?? today;
-  const oldest = input.oldest ?? subtractCalendarDays(newest, 29);
+  const oldest = input.oldest ?? subtractCalendarDays(newest, 59);
 
+  validateDateRange(oldest, newest);
+  return { oldest, newest };
+}
+
+export function resolveActivityDateRange(
+  input: OptionalDateRange,
+  now: Date,
+  timeZone: string,
+): SyncDateRange {
+  if ((input.oldest === undefined) !== (input.newest === undefined)) {
+    throw new HttpProblem(
+      400,
+      "Invalid date range",
+      "oldest and newest must be supplied together.",
+    );
+  }
+
+  const newest = input.newest ?? calendarDateInTimeZone(now, timeZone);
+  const oldest = input.oldest ?? subtractCalendarDays(newest, 59);
+
+  validateDateRange(oldest, newest);
+  return { oldest, newest };
+}
+
+function validateDateRange(oldest: string, newest: string): void {
   if (!isCalendarDate(oldest) || !isCalendarDate(newest)) {
     throw new HttpProblem(400, "Invalid date range", "Dates must be valid YYYY-MM-DD values.");
   }
   if (oldest > newest) {
     throw new HttpProblem(400, "Invalid date range", "oldest must not be after newest.");
   }
-
-  return { oldest, newest };
 }

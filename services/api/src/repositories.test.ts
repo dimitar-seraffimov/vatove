@@ -2,11 +2,144 @@ import type { Pool } from "pg";
 import { describe, expect, it } from "vitest";
 
 import {
+  PostgresActivitiesStore,
   PostgresSyncRunsStore,
   decodeActivityCursor,
   encodeActivityCursor,
   sanitizeWorkerError,
 } from "./repositories.js";
+
+describe("activity queries", () => {
+  it("applies the local-date range to paginated activity queries", async () => {
+    const calls: Array<{ text: string; values?: unknown[] }> = [];
+    const pool = {
+      query: async (text: string, values?: unknown[]) => {
+        calls.push({ text, values });
+        return { rows: [] };
+      },
+    } as unknown as Pool;
+    const store = new PostgresActivitiesStore(pool);
+
+    await store.list(
+      30,
+      undefined,
+      { oldest: "2026-05-22", newest: "2026-07-20" },
+      "Europe/London",
+    );
+
+    expect(calls[0]?.values).toEqual([
+      "2026-05-22",
+      "2026-07-20",
+      "Europe/London",
+      null,
+      null,
+      31,
+    ]);
+    expect(calls[0]?.text).toContain("AT TIME ZONE $3");
+  });
+
+  it("returns five-metre simplified routes as a GeoJSON feature collection", async () => {
+    const calls: Array<{ text: string; values?: unknown[] }> = [];
+    const pool = {
+      query: async (text: string, values?: unknown[]) => {
+        calls.push({ text, values });
+        return {
+          rows: [
+            {
+              id: "0a02e7b4-5b09-45bb-aafb-9a4597d3a0bb",
+              route_geometry: {
+                type: "LineString",
+                coordinates: [
+                  [-0.1, 51.5],
+                  [-0.2, 51.6],
+                ],
+              },
+            },
+          ],
+        };
+      },
+    } as unknown as Pool;
+    const store = new PostgresActivitiesStore(pool);
+
+    const routes = await store.listRoutes(
+      { oldest: "2026-05-22", newest: "2026-07-20" },
+      "Europe/London",
+    );
+
+    expect(routes).toEqual({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [-0.1, 51.5],
+              [-0.2, 51.6],
+            ],
+          },
+          properties: { activityId: "0a02e7b4-5b09-45bb-aafb-9a4597d3a0bb" },
+        },
+      ],
+    });
+    expect(calls[0]?.text).toContain("ST_SimplifyPreserveTopology");
+    expect(calls[0]?.text).toContain(", 5)");
+    expect(calls[0]?.values).toEqual(["2026-05-22", "2026-07-20", "Europe/London"]);
+  });
+
+  it("normalizes legacy zones without duration data in activity details", async () => {
+    const pool = {
+      query: async () => ({
+        rows: [
+          {
+            id: "0a02e7b4-5b09-45bb-aafb-9a4597d3a0bb",
+            source: "intervals",
+            source_activity_id: "i123",
+            name: "Morning Ride",
+            sport: "Ride",
+            start_at: "2026-07-20T08:00:00.000Z",
+            moving_time_seconds: 3600,
+            distance_meters: "25000",
+            has_route: true,
+            has_heart_rate: true,
+            has_elevation: true,
+            average_heart_rate_bpm: 145,
+            max_heart_rate_bpm: 178,
+            route_geometry: {
+              type: "LineString",
+              coordinates: [
+                [-0.1, 51.5],
+                [-0.2, 51.6],
+              ],
+            },
+            samples: [],
+            heart_rate_zones: [
+              { index: 0, label: "Z1", color: "#fff", minBpm: null, maxBpm: 120 },
+            ],
+          },
+        ],
+      }),
+    } as unknown as Pool;
+    const store = new PostgresActivitiesStore(pool);
+
+    const detail = await store.findById("0a02e7b4-5b09-45bb-aafb-9a4597d3a0bb");
+
+    expect(detail).toMatchObject({
+      averageHeartRateBpm: 145,
+      maxHeartRateBpm: 178,
+      heartRateZones: [
+        {
+          index: 0,
+          label: "Z1",
+          color: "#fff",
+          minBpm: null,
+          maxBpm: 120,
+          durationSeconds: null,
+        },
+      ],
+    });
+  });
+});
 
 describe("activity cursors", () => {
   it("round trips a versioned opaque cursor", () => {

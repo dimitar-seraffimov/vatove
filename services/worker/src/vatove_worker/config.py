@@ -26,6 +26,7 @@ class Settings(BaseSettings):
 
     intervals_api_base_url: str = "https://intervals.icu"
     intervals_api_key: SecretStr
+    intervals_athlete_id: str = "0"
     intervals_user_agent: str = "Mozilla/5.0 (compatible; vatove/0.1; +http://localhost)"
     intervals_requests_per_second: float = Field(default=8.0, gt=0, lt=10)
     intervals_timeout_seconds: float = Field(default=30.0, gt=0)
@@ -37,6 +38,14 @@ class Settings(BaseSettings):
     @classmethod
     def strip_api_base_url(cls, value: str) -> str:
         return value.rstrip("/")
+
+    @field_validator("intervals_athlete_id")
+    @classmethod
+    def require_athlete_id(cls, value: str) -> str:
+        athlete_id = value.strip()
+        if not athlete_id:
+            raise ValueError("INTERVALS_ATHLETE_ID must not be empty")
+        return athlete_id
 
     @property
     def kafka_broker_list(self) -> list[str]:

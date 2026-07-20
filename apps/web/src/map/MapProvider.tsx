@@ -61,10 +61,6 @@ export function MapProvider({ children }: PropsWithChildren) {
         cooperativeGestures: true,
       });
       instance.addControl(
-        new maplibregl.NavigationControl({ showCompass: true, visualizePitch: true }),
-        "top-right",
-      );
-      instance.addControl(
         new maplibregl.AttributionControl({ compact: true }),
         "bottom-right",
       );

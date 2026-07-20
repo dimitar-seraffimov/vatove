@@ -127,6 +127,8 @@ class Repository:
             "start_at": activity.start_at,
             "moving_time_seconds": activity.moving_time_seconds,
             "distance_meters": activity.distance_meters,
+            "average_heart_rate_bpm": activity.average_heart_rate_bpm,
+            "max_heart_rate_bpm": activity.max_heart_rate_bpm,
             "route": route,
             "samples": samples,
             "heart_rate_zones": heart_rate_zones,
@@ -184,4 +186,3 @@ def _sanitize_error(error: str) -> str:
     # Third-party response bodies and API keys are never included in raised client errors. The
     # bound keeps status responses and the audit table useful without unbounded payload growth.
     return " ".join(error.split())[:1000]
-

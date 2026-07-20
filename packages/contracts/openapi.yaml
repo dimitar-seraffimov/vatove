@@ -30,6 +30,7 @@ paths:
   /sync-runs:
     post:
       operationId: createSyncRun
+      description: Queues the inclusive 60-day window ending on the current APP_TIMEZONE calendar date when no range is supplied.
       requestBody:
         required: false
         content:
@@ -64,6 +65,8 @@ paths:
     get:
       operationId: listActivities
       parameters:
+        - $ref: "#/components/parameters/Oldest"
+        - $ref: "#/components/parameters/Newest"
         - name: cursor
           in: query
           schema: { type: string }
@@ -83,6 +86,20 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/ActivitySummary" }
                   nextCursor: { type: [string, "null"] }
+        "400": { $ref: "#/components/responses/Problem" }
+  /activity-routes:
+    get:
+      operationId: listActivityRoutes
+      parameters:
+        - $ref: "#/components/parameters/Oldest"
+        - $ref: "#/components/parameters/Newest"
+      responses:
+        "200":
+          description: Simplified routes for activities in the requested calendar-date window
+          content:
+            application/geo+json:
+              schema:
+                $ref: "#/components/schemas/ActivityRouteCollection"
         "400": { $ref: "#/components/responses/Problem" }
   /activities/{id}:
     get:
@@ -104,6 +121,16 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    Oldest:
+      name: oldest
+      in: query
+      description: Inclusive oldest local calendar date. Must be supplied with newest; both default to the latest 60-day window when omitted.
+      schema: { type: string, format: date }
+    Newest:
+      name: newest
+      in: query
+      description: Inclusive newest local calendar date. Must be supplied with oldest; both default to the latest 60-day window when omitted.
+      schema: { type: string, format: date }
   responses:
     Problem:
       description: RFC 9457-style problem response
@@ -159,8 +186,10 @@ components:
       allOf:
         - $ref: "#/components/schemas/ActivitySummary"
         - type: object
-          required: [route, samples, heartRateZones]
+          required: [averageHeartRateBpm, maxHeartRateBpm, route, samples, heartRateZones]
           properties:
+            averageHeartRateBpm: { type: [number, "null"] }
+            maxHeartRateBpm: { type: [number, "null"] }
             route:
               oneOf:
                 - $ref: "#/components/schemas/LineStringFeature"
@@ -194,6 +223,14 @@ components:
           required: [activityId]
           properties:
             activityId: { type: string, format: uuid }
+    ActivityRouteCollection:
+      type: object
+      required: [type, features]
+      properties:
+        type: { type: string, const: FeatureCollection }
+        features:
+          type: array
+          items: { $ref: "#/components/schemas/LineStringFeature" }
     ActivitySample:
       type: object
       required: [index, sourceIndex, longitude, latitude, elapsedSeconds, distanceMeters, elevationMeters, heartRateBpm, heartRateZone]
@@ -209,11 +246,11 @@ components:
         heartRateZone: { type: [integer, "null"] }
     HeartRateZone:
       type: object
-      required: [index, label, color, minBpm, maxBpm]
+      required: [index, label, color, minBpm, maxBpm, durationSeconds]
       properties:
         index: { type: integer, minimum: 0 }
         label: { type: string }
         color: { type: string }
         minBpm: { type: [integer, "null"] }
         maxBpm: { type: [integer, "null"] }
-
+        durationSeconds: { type: [number, "null"], minimum: 0 }
