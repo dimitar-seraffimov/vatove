@@ -1,38 +1,30 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { ActivityDetail, ActivityRouteCollection } from "@vatove/contracts";
-import type { Feature, FeatureCollection, LineString } from "geojson";
+import type { Feature, LineString } from "geojson";
 import maplibregl, {
-  type FilterSpecification,
-  type GeoJSONSource,
-  type Map as MapLibreMap,
   type MapMouseEvent,
+  type MapSourceDataEvent,
   type Marker,
 } from "maplibre-gl";
 import { useTooltip } from "../context/TooltipContext";
 import {
   buildHeartRateRoutePresentation,
-  NEUTRAL_ROUTE_COLOR,
-  type HeartRateRoutePresentation,
-} from "./heartRateGradient";
+} from "./heartRateSegments";
+import {
+  ACTIVE_SOURCE_ID,
+  activeSourceContainsActivity,
+  ensureActivityMapLayers,
+  OVERVIEW_HIT_LAYER_ID,
+  setSelectedLoadingHighlight,
+  type RouteCollection,
+} from "./activityMapLayers";
 import { useMap } from "./MapProvider";
 import { snapToSampleIndex } from "./snapToRoute";
 
-const OVERVIEW_SOURCE_ID = "activity-route-overview";
-const OVERVIEW_LAYER_ID = "activity-route-overview-line";
-const OVERVIEW_SELECTED_LAYER_ID = "activity-route-selected-line";
-const OVERVIEW_HIT_LAYER_ID = "activity-route-hit-target";
-const ACTIVE_SOURCE_ID = "active-activity-route";
-const ACTIVE_LAYER_ID = "active-activity-route-line";
-
 type RouteFeature = Feature<LineString, { activityId: string }>;
-type RouteCollection = FeatureCollection<LineString, { activityId: string }>;
 
 function prefersReducedMotion(): boolean {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
-
-function selectedFilter(selectedId: string | null): FilterSpecification {
-  return ["==", ["get", "activityId"], selectedId ?? ""];
 }
 
 function visibleOverlay(element: HTMLElement): boolean {
@@ -111,91 +103,6 @@ function routeBounds(features: readonly RouteFeature[]): maplibregl.LngLatBounds
   return bounds;
 }
 
-function ensureSourcesAndLayers(
-  map: MapLibreMap,
-  routes: RouteCollection,
-  activeRoute: HeartRateRoutePresentation,
-  selectedId: string | null,
-): void {
-  if (!map.isStyleLoaded()) return;
-
-  const overviewSource = map.getSource(OVERVIEW_SOURCE_ID) as GeoJSONSource | undefined;
-  if (overviewSource) overviewSource.setData(routes);
-  else {
-    map.addSource(OVERVIEW_SOURCE_ID, { type: "geojson", data: routes });
-  }
-
-  if (!map.getLayer(OVERVIEW_LAYER_ID)) {
-    map.addLayer({
-      id: OVERVIEW_LAYER_ID,
-      type: "line",
-      source: OVERVIEW_SOURCE_ID,
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: {
-        "line-color": "#71817c",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 3, 1.25, 12, 2.5, 18, 4],
-        "line-opacity": 0.48,
-      },
-    });
-  }
-  if (!map.getLayer(OVERVIEW_SELECTED_LAYER_ID)) {
-    map.addLayer({
-      id: OVERVIEW_SELECTED_LAYER_ID,
-      type: "line",
-      source: OVERVIEW_SOURCE_ID,
-      filter: selectedFilter(selectedId),
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: {
-        "line-color": NEUTRAL_ROUTE_COLOR,
-        "line-width": ["interpolate", ["linear"], ["zoom"], 3, 3, 12, 7, 18, 11],
-        "line-opacity": 0.82,
-        "line-blur": 0.2,
-      },
-    });
-  } else {
-    map.setFilter(OVERVIEW_SELECTED_LAYER_ID, selectedFilter(selectedId));
-  }
-  if (!map.getLayer(OVERVIEW_HIT_LAYER_ID)) {
-    map.addLayer({
-      id: OVERVIEW_HIT_LAYER_ID,
-      type: "line",
-      source: OVERVIEW_SOURCE_ID,
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": "rgba(0, 0, 0, 0)", "line-width": 18 },
-    });
-  }
-
-  const activeSource = map.getSource(ACTIVE_SOURCE_ID) as GeoJSONSource | undefined;
-  if (activeSource) activeSource.setData(activeRoute.data);
-  else {
-    map.addSource(ACTIVE_SOURCE_ID, {
-      type: "geojson",
-      data: activeRoute.data,
-      lineMetrics: true,
-    });
-  }
-
-  if (!map.getLayer(ACTIVE_LAYER_ID)) {
-    map.addLayer({
-      id: ACTIVE_LAYER_ID,
-      type: "line",
-      source: ACTIVE_SOURCE_ID,
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: {
-        "line-width": ["interpolate", ["linear"], ["zoom"], 3, 4, 12, 8, 18, 13],
-        "line-opacity": 0.98,
-        "line-gradient": activeRoute.gradient,
-      },
-    });
-  } else {
-    map.setPaintProperty(ACTIVE_LAYER_ID, "line-gradient", activeRoute.gradient);
-  }
-  // Style reloads and rapid source updates can otherwise leave the neutral
-  // overview above the HR route. Reassert the active layer as the final layer.
-  map.moveLayer(ACTIVE_LAYER_ID);
-  map.triggerRepaint();
-}
-
 export interface ActivityMapProps {
   activity: ActivityDetail | null;
   routes: ActivityRouteCollection;
@@ -230,6 +137,10 @@ export function ActivityMap({
     () => buildHeartRateRoutePresentation(selectedActivity),
     [selectedActivity],
   );
+  const awaitingActiveSource = Boolean(selectedId && activeRoute.data.features.length > 0);
+  const showSelectedLoadingHighlight = Boolean(
+    selectedId && (loadingDetail || awaitingActiveSource),
+  );
   const selectedOverviewRoute = useMemo(
     () => routeData.features.find((feature) => feature.properties.activityId === selectedId) ?? null,
     [routeData.features, selectedId],
@@ -237,8 +148,42 @@ export function ActivityMap({
 
   useEffect(() => {
     if (!map || styleRevision === 0 || !map.isStyleLoaded()) return;
-    ensureSourcesAndLayers(map, routeData, activeRoute, selectedId);
-  }, [activeRoute, map, routeData, selectedId, styleRevision]);
+    const hideHighlightWhenCurrentSourceIsReady = () => {
+      if (!selectedId || !awaitingActiveSource) return;
+      if (!activeSourceContainsActivity(map, selectedId)) return;
+      setSelectedLoadingHighlight(map, null);
+    };
+    const onSourceData = (event: MapSourceDataEvent) => {
+      if (
+        event.sourceId !== ACTIVE_SOURCE_ID ||
+        !event.isSourceLoaded ||
+        (event.sourceDataType !== "content" && event.sourceDataType !== "idle")
+      ) {
+        return;
+      }
+      hideHighlightWhenCurrentSourceIsReady();
+    };
+    if (awaitingActiveSource) map.on("sourcedata", onSourceData);
+    ensureActivityMapLayers(
+      map,
+      routeData,
+      activeRoute,
+      selectedId,
+      showSelectedLoadingHighlight,
+    );
+    hideHighlightWhenCurrentSourceIsReady();
+    return () => {
+      if (awaitingActiveSource) map.off("sourcedata", onSourceData);
+    };
+  }, [
+    activeRoute,
+    awaitingActiveSource,
+    map,
+    routeData,
+    selectedId,
+    showSelectedLoadingHighlight,
+    styleRevision,
+  ]);
 
   useEffect(() => {
     if (!map || styleRevision === 0) return;
@@ -295,6 +240,8 @@ export function ActivityMap({
     if (!map || styleRevision === 0 || !selectedId || !selectedOverviewRoute) return;
     const bounds = routeBounds([selectedOverviewRoute]);
     if (!bounds) return;
+    let animationFrame: number | null = null;
+    let transitionTimer: number | null = null;
     const fitSelectedRoute = () => {
       map.fitBounds(bounds, {
         padding: fitPadding(map.getContainer()),
@@ -302,12 +249,21 @@ export function ActivityMap({
         duration: prefersReducedMotion() ? 0 : 500,
       });
     };
+    const fitAfterLayout = () => {
+      animationFrame = window.requestAnimationFrame(fitSelectedRoute);
+    };
     if (!window.matchMedia("(max-width: 999px)").matches) {
-      fitSelectedRoute();
-      return;
+      fitAfterLayout();
+    } else {
+      transitionTimer = window.setTimeout(
+        fitAfterLayout,
+        prefersReducedMotion() ? 0 : 260,
+      );
     }
-    const timer = window.setTimeout(fitSelectedRoute, prefersReducedMotion() ? 0 : 260);
-    return () => window.clearTimeout(timer);
+    return () => {
+      if (transitionTimer !== null) window.clearTimeout(transitionTimer);
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
+    };
   }, [map, selectedId, selectedOverviewRoute, selectionRevision, styleRevision]);
 
   useEffect(() => {
@@ -344,7 +300,10 @@ export function ActivityMap({
     selectedId && !loadingDetail && selectedActivity && !selectedActivity.route,
   );
   const unmatchedHeartRateRoute = Boolean(
-    selectedActivity?.route && selectedActivity.hasHeartRate && !activeRoute.hasZoneColors,
+    selectedActivity?.route &&
+      selectedActivity.hasHeartRate &&
+      selectedActivity.heartRateZones.length > 0 &&
+      activeRoute.stats.coloredEdges === 0,
   );
   const controlsDisabled = map === null || styleRevision === 0;
 
