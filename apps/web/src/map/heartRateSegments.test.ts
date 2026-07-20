@@ -207,16 +207,15 @@ describe("buildHeartRateRoutePresentation", () => {
     );
 
     expect(zoneOne?.geometry.coordinates).toHaveLength(1);
-    expect(zoneOne?.geometry.coordinates[0]).toHaveLength(2);
+    expect(zoneOne?.geometry.coordinates[0]).toHaveLength(3);
     expect(zoneTwo?.geometry.coordinates).toHaveLength(1);
-    expect(zoneTwo?.geometry.coordinates[0]).toHaveLength(3);
     expect(zoneOne?.geometry.coordinates[0]?.at(-1)).toEqual(
       zoneTwo?.geometry.coordinates[0]?.at(0),
     );
     expect(presentation.stats.coloredEdges).toBe(3);
   });
 
-  it("bridges gaps between valid coordinates when intermediate samples lack GPS data", () => {
+  it("breaks runs at invalid coordinates instead of bridging gaps", () => {
     const samples = [
       sample(0, 1),
       sample(1, 1),
@@ -233,17 +232,19 @@ describe("buildHeartRateRoutePresentation", () => {
     });
 
     expect(presentation.stats).toEqual({
-      totalEdges: 3,
-      coloredEdges: 3,
+      totalEdges: 4,
+      coloredEdges: 2,
       neutralEdges: 0,
-      discardedEdges: 1,
+      discardedEdges: 2,
     });
     expect(presentation.data.features).toHaveLength(1);
-    expect(presentation.data.features[0]?.geometry.coordinates).toHaveLength(1);
+    expect(presentation.data.features[0]?.geometry.coordinates).toHaveLength(2);
     expect(presentation.data.features[0]?.geometry.coordinates).toEqual([
       [
         [samples[0]!.longitude, samples[0]!.latitude],
         [samples[1]!.longitude, samples[1]!.latitude],
+      ],
+      [
         [samples[3]!.longitude, samples[3]!.latitude],
         [samples[4]!.longitude, samples[4]!.latitude],
       ],
