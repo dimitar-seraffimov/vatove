@@ -46,7 +46,15 @@ export default defineConfig({
     })
   ],
   build: {
-    sourcemap: true
+    sourcemap: true,
+    emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        entryFileNames: "assets/[name]-[hash]-[timestamp].js",
+        chunkFileNames: "assets/[name]-[hash]-[timestamp].js",
+        assetFileNames: "assets/[name]-[hash]-[timestamp][extname]",
+      }
+    }
   },
   server: {
     host: "127.0.0.1",
@@ -60,7 +68,7 @@ export default defineConfig({
   },
   test: {
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
-    environment: "node",
+    environment: "jsdom",
     coverage: {
       reporter: ["text", "html"]
     }
