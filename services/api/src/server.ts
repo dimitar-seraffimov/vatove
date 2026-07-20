@@ -40,7 +40,7 @@ async function main(): Promise<void> {
   });
   const server = await listen(app, config.port);
   dispatcher.start();
-  logger.info("Vatove API is listening", { port: config.port, nodeEnv: config.nodeEnv });
+  logger.info("vatove API is listening", { port: config.port, nodeEnv: config.nodeEnv });
 
   let shuttingDown = false;
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
@@ -85,6 +85,6 @@ function closeServer(server: Server): Promise<void> {
 }
 
 void main().catch((error: unknown) => {
-  logger.error("Vatove API failed to start", errorContext(error));
+  logger.error("vatove API failed to start", errorContext(error));
   process.exitCode = 1;
 });

@@ -130,17 +130,15 @@ class IntervalsClient:
         except ValidationError as error:
             raise IntervalsPayloadError(f"invalid activity detail for {activity_id}") from error
 
-        raw_map = self._get_json(f"/api/v1/activity/{activity_id}/map")
-        map_points = parse_map_payload(raw_map)
-
         raw_streams = self._get_json(
             f"/api/v1/activity/{activity_id}/streams.json",
-            params={"types": "time,distance,heartrate,altitude"},
+            params={"types": "time,distance,heartrate,altitude,latlng"},
         )
         try:
             streams = TypeAdapter(list[IntervalsStream]).validate_python(raw_streams)
         except ValidationError as error:
             raise IntervalsPayloadError(f"invalid stream payload for {activity_id}") from error
+        map_points = map_points_from_streams(streams)
         return FetchedActivity(activity, raw_activity, map_points, streams)
 
     def _get_json(self, path: str, params: Mapping[str, str] | None = None) -> Any:
@@ -264,6 +262,31 @@ def parse_map_payload(payload: Any) -> list[MapPoint]:
         raise IntervalsPayloadError("unrecognized map object payload")
 
     return _point_sequence(payload)
+
+
+def map_points_from_streams(streams: Sequence[IntervalsStream]) -> list[MapPoint]:
+    """Build route points from Intervals' paired ``latlng`` activity stream.
+
+    Intervals stores latitude in ``data`` and longitude in ``data2``. Array positions are the
+    source indices shared by all activity streams, so retain them when either coordinate is null.
+    """
+
+    latlng_streams = [stream for stream in streams if stream.type == "latlng"]
+    if not latlng_streams:
+        return []
+    if len(latlng_streams) > 1:
+        raise IntervalsPayloadError("duplicate stream type: latlng")
+
+    stream = latlng_streams[0]
+    if stream.data2 is None:
+        raise IntervalsPayloadError("latlng stream is missing longitude data")
+    return parse_map_payload(
+        {
+            "data": stream.data,
+            "data2": stream.data2,
+            "source_indices": list(range(len(stream.data))),
+        }
+    )
 
 
 def _geojson_points(geometry: Mapping[str, Any]) -> list[MapPoint]:

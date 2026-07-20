@@ -11,8 +11,8 @@ export default defineConfig({
       injectRegister: false,
       includeAssets: ["icon.svg", "maskable-icon.svg"],
       manifest: {
-        name: "Vatove Activity Explorer",
-        short_name: "Vatove",
+        name: "vatove Activity Explorer",
+        short_name: "vatove",
         description: "Explore Intervals.icu routes, heart-rate zones, and elevation.",
         theme_color: "#071712",
         background_color: "#f3f1e9",

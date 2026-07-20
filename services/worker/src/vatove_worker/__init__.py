@@ -1,4 +1,4 @@
-"""Vatove activity ingestion worker."""
+"""vatove activity ingestion worker."""
 
 __all__ = ["__version__"]
 

@@ -26,7 +26,7 @@ class Settings(BaseSettings):
 
     intervals_api_base_url: str = "https://intervals.icu"
     intervals_api_key: SecretStr
-    intervals_user_agent: str = "Mozilla/5.0 (compatible; Vatove/0.1; +http://localhost)"
+    intervals_user_agent: str = "Mozilla/5.0 (compatible; vatove/0.1; +http://localhost)"
     intervals_requests_per_second: float = Field(default=8.0, gt=0, lt=10)
     intervals_timeout_seconds: float = Field(default=30.0, gt=0)
     intervals_max_retries: int = Field(default=4, ge=0, le=10)

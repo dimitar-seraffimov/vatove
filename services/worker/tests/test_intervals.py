@@ -12,9 +12,11 @@ from vatove_worker.intervals import (
     IntervalsAuthenticationError,
     IntervalsClient,
     IntervalsPayloadError,
+    map_points_from_streams,
     parse_map_payload,
     retry_after_seconds,
 )
+from vatove_worker.schemas import IntervalsStream
 
 
 class FakeTime:
@@ -58,7 +60,6 @@ def make_client(
 def test_fetch_activity_uses_basic_auth_and_expected_endpoints(fixture_json: Any) -> None:
     responses = {
         "/api/v1/activity/i9001": fixture_json("activity_detail.json"),
-        "/api/v1/activity/i9001/map": fixture_json("activity_map.json"),
         "/api/v1/activity/i9001/streams.json": fixture_json("activity_streams.json"),
     }
     requests: list[httpx.Request] = []
@@ -72,10 +73,37 @@ def test_fetch_activity_uses_basic_auth_and_expected_endpoints(fixture_json: Any
 
     assert fetched.activity.id == "i9001"
     assert [point.source_index for point in fetched.map_points] == [0, 2, 4]
-    assert requests[-1].url.params["types"] == "time,distance,heartrate,altitude"
+    assert all(point.source_index_explicit for point in fetched.map_points)
+    assert [request.url.path for request in requests] == [
+        "/api/v1/activity/i9001",
+        "/api/v1/activity/i9001/streams.json",
+    ]
+    assert requests[-1].url.params["types"] == "time,distance,heartrate,altitude,latlng"
     expected = "Basic " + base64.b64encode(b"API_KEY:secret-key").decode()
     assert all(request.headers["Authorization"] == expected for request in requests)
     assert all("Mozilla/5.0" in request.headers["User-Agent"] for request in requests)
+
+
+def test_fetch_activity_allows_an_activity_without_a_route(fixture_json: Any) -> None:
+    responses = {
+        "/api/v1/activity/i9001": fixture_json("activity_detail.json"),
+        "/api/v1/activity/i9001/streams.json": [
+            {"type": "time", "data": [0, 5]},
+            {"type": "heartrate", "data": [100, 105]},
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=responses[request.url.path])
+
+    fetched = make_client(handler, FakeTime()).fetch_activity("i9001")
+
+    assert fetched.map_points == []
+
+
+def test_latlng_stream_requires_paired_longitudes() -> None:
+    with pytest.raises(IntervalsPayloadError, match="missing longitude"):
+        map_points_from_streams([IntervalsStream(type="latlng", data=[51.5])])
 
 
 def test_429_obeys_retry_after_before_retry(fixture_json: Any) -> None:

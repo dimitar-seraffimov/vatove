@@ -121,12 +121,12 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="site-header">
-        <a className="brand" href="/" aria-label="Vatove home">
+        <a className="brand" href="/" aria-label="vatove home">
           <span className="brand-mark" aria-hidden="true">
             <i />
           </span>
           <span>
-            <strong>Vatove</strong>
+            <strong>vatove</strong>
             <small>Activity explorer</small>
           </span>
         </a>

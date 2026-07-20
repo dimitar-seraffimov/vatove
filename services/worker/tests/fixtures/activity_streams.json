@@ -2,6 +2,10 @@
   {"type": "time", "data": [0, 5, 10, 15, 20]},
   {"type": "distance", "data": [0, 25.2, 51.0, 77.4, 104.1]},
   {"type": "heartrate", "data": [100, 125, 140, null, 180]},
-  {"type": "altitude", "data": [15.1, 15.4, 16.0, null, 17.25]}
+  {"type": "altitude", "data": [15.1, 15.4, 16.0, null, 17.25]},
+  {
+    "type": "latlng",
+    "data": [51.5007, null, 51.5015, null, 51.5030],
+    "data2": [-0.1246, null, -0.1200, null, -0.1150]
+  }
 ]
-

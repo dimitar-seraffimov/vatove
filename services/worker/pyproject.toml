@@ -1,7 +1,7 @@
 [project]
 name = "vatove-worker"
 version = "0.1.0"
-description = "Intervals.icu ingestion worker for Vatove"
+description = "Intervals.icu ingestion worker for vatove"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "alembic>=1.14,<2",

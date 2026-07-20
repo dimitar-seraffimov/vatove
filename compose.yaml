@@ -108,7 +108,7 @@ services:
       KAFKA_CONSUMER_GROUP: vatove-intervals-worker-v1
       INTERVALS_API_BASE_URL: ${INTERVALS_API_BASE_URL:-https://intervals.icu}
       INTERVALS_API_KEY: ${INTERVALS_API_KEY:-}
-      INTERVALS_USER_AGENT: ${INTERVALS_USER_AGENT:-Mozilla/5.0 (compatible; Vatove/0.1; +http://localhost)}
+      INTERVALS_USER_AGENT: ${INTERVALS_USER_AGENT:-Mozilla/5.0 (compatible; vatove/0.1; +http://localhost)}
       INTERVALS_REQUESTS_PER_SECOND: ${INTERVALS_REQUESTS_PER_SECOND:-8}
     depends_on:
       migrate:
