@@ -9,8 +9,11 @@ import maplibregl, {
   type Marker,
 } from "maplibre-gl";
 import { useTooltip } from "../context/TooltipContext";
-import { NEUTRAL_ROUTE_COLOR } from "./heartRateGradient";
-import { buildHeartRateRouteSegments } from "./heartRateSegments";
+import {
+  buildHeartRateRoutePresentation,
+  NEUTRAL_ROUTE_COLOR,
+  type HeartRateRoutePresentation,
+} from "./heartRateGradient";
 import { useMap } from "./MapProvider";
 import { snapToSampleIndex } from "./snapToRoute";
 
@@ -23,11 +26,6 @@ const ACTIVE_LAYER_ID = "active-activity-route-line";
 
 type RouteFeature = Feature<LineString, { activityId: string }>;
 type RouteCollection = FeatureCollection<LineString, { activityId: string }>;
-
-const EMPTY_ROUTES: RouteCollection = {
-  type: "FeatureCollection",
-  features: [],
-};
 
 function prefersReducedMotion(): boolean {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -116,7 +114,7 @@ function routeBounds(features: readonly RouteFeature[]): maplibregl.LngLatBounds
 function ensureSourcesAndLayers(
   map: MapLibreMap,
   routes: RouteCollection,
-  activity: ActivityDetail | null,
+  activeRoute: HeartRateRoutePresentation,
   selectedId: string | null,
 ): void {
   if (!map.isStyleLoaded()) return;
@@ -167,13 +165,13 @@ function ensureSourcesAndLayers(
     });
   }
 
-  const selectedRoute = activity ? buildHeartRateRouteSegments(activity) : EMPTY_ROUTES;
   const activeSource = map.getSource(ACTIVE_SOURCE_ID) as GeoJSONSource | undefined;
-  if (activeSource) activeSource.setData(selectedRoute);
+  if (activeSource) activeSource.setData(activeRoute.data);
   else {
     map.addSource(ACTIVE_SOURCE_ID, {
       type: "geojson",
-      data: selectedRoute,
+      data: activeRoute.data,
+      lineMetrics: true,
     });
   }
 
@@ -184,12 +182,18 @@ function ensureSourcesAndLayers(
       source: ACTIVE_SOURCE_ID,
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
-        "line-width": ["interpolate", ["linear"], ["zoom"], 3, 3, 12, 7, 18, 12],
+        "line-width": ["interpolate", ["linear"], ["zoom"], 3, 4, 12, 8, 18, 13],
         "line-opacity": 0.98,
-        "line-color": ["coalesce", ["get", "color"], NEUTRAL_ROUTE_COLOR],
+        "line-gradient": activeRoute.gradient,
       },
     });
+  } else {
+    map.setPaintProperty(ACTIVE_LAYER_ID, "line-gradient", activeRoute.gradient);
   }
+  // Style reloads and rapid source updates can otherwise leave the neutral
+  // overview above the HR route. Reassert the active layer as the final layer.
+  map.moveLayer(ACTIVE_LAYER_ID);
+  map.triggerRepaint();
 }
 
 export interface ActivityMapProps {
@@ -222,6 +226,10 @@ export function ActivityMap({
   const markerRef = useRef<Marker | null>(null);
   const routeData = routes as RouteCollection;
   const selectedActivity = activity?.id === selectedId ? activity : null;
+  const activeRoute = useMemo(
+    () => buildHeartRateRoutePresentation(selectedActivity),
+    [selectedActivity],
+  );
   const selectedOverviewRoute = useMemo(
     () => routeData.features.find((feature) => feature.properties.activityId === selectedId) ?? null,
     [routeData.features, selectedId],
@@ -229,8 +237,8 @@ export function ActivityMap({
 
   useEffect(() => {
     if (!map || styleRevision === 0 || !map.isStyleLoaded()) return;
-    ensureSourcesAndLayers(map, routeData, selectedActivity, selectedId);
-  }, [map, routeData, selectedActivity, selectedId, styleRevision]);
+    ensureSourcesAndLayers(map, routeData, activeRoute, selectedId);
+  }, [activeRoute, map, routeData, selectedId, styleRevision]);
 
   useEffect(() => {
     if (!map || styleRevision === 0) return;
@@ -335,6 +343,9 @@ export function ActivityMap({
   const noSelectedRoute = Boolean(
     selectedId && !loadingDetail && selectedActivity && !selectedActivity.route,
   );
+  const unmatchedHeartRateRoute = Boolean(
+    selectedActivity?.route && selectedActivity.hasHeartRate && !activeRoute.hasZoneColors,
+  );
   const controlsDisabled = map === null || styleRevision === 0;
 
   return (
@@ -365,6 +376,11 @@ export function ActivityMap({
           {mapLoading ? "Loading map…" : "Loading 60-day routes…"}
         </div>
       )}
+      {!mapLoading && !loadingRoutes && selectedId && loadingDetail && (
+        <div className="map-status" role="status">
+          Loading heart-rate route…
+        </div>
+      )}
       {routesError && (
         <div className="map-status map-status--error" role="alert">
           <span>Routes unavailable · {routesError}</span>
@@ -380,6 +396,11 @@ export function ActivityMap({
       )}
       {noSelectedRoute && (
         <div className="map-status">No GPS route was recorded for this activity.</div>
+      )}
+      {unmatchedHeartRateRoute && (
+        <div className="map-status map-status--error" role="alert">
+          Heart-rate samples loaded, but no route zones could be matched.
+        </div>
       )}
       {contextLost && (
         <div className="map-status map-status--error" role="alert">

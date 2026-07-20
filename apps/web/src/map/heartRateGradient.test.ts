@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ActivitySample, HeartRateZone } from "@vatove/contracts";
 import {
   buildHeartRateGradient,
+  buildHeartRateRoutePresentation,
   NEUTRAL_ROUTE_COLOR,
 } from "./heartRateGradient";
 
@@ -26,7 +27,7 @@ const zones: HeartRateZone[] = [
 ];
 
 describe("buildHeartRateGradient", () => {
-  it("creates bounded, increasing progress stops at zone transitions", () => {
+  it("creates hard, increasing progress steps at zone transitions", () => {
     const expression = buildHeartRateGradient(
       [sample(0, 1), sample(1, 1), sample(2, 2), sample(3, 2)],
       zones,
@@ -35,27 +36,48 @@ describe("buildHeartRateGradient", () => {
     const positions = stops.filter((_, index) => index % 2 === 0) as number[];
 
     expect(expression.slice(0, 3)).toEqual([
-      "interpolate",
-      ["linear"],
+      "step",
       ["line-progress"],
+      "#35a66f",
     ]);
-    expect(positions[0]).toBe(0);
-    expect(positions.at(-1)).toBe(1);
+    expect(positions.length).toBeGreaterThan(0);
+    expect(positions.every((position) => position > 0 && position < 1)).toBe(true);
     expect(positions.every((position, index) => index === 0 || position > positions[index - 1]!)).toBe(true);
-    expect(stops).toContain("#35a66f");
     expect(stops).toContain("#f5a623");
   });
 
   it("uses the neutral colour when heart rate is absent", () => {
     const expression = buildHeartRateGradient([sample(0, null), sample(1, null)], zones);
     expect(expression).toEqual([
-      "interpolate",
-      ["linear"],
+      "step",
       ["line-progress"],
-      0,
-      NEUTRAL_ROUTE_COLOR,
-      1,
       NEUTRAL_ROUTE_COLOR,
     ]);
+  });
+
+  it("positions transitions by route distance rather than sample index", () => {
+    const samples = [sample(0, 1), sample(1, 2), sample(2, 2)];
+    samples[0]!.longitude = 0;
+    samples[1]!.longitude = 0.001;
+    samples[2]!.longitude = 0.01;
+
+    const expression = buildHeartRateGradient(samples, zones);
+    expect(expression[3]).toBeLessThan(0.2);
+  });
+
+  it("keeps a 12k-sample activity in one feature with only zone transition stops", () => {
+    const samples = Array.from({ length: 12_441 }, (_, index) =>
+      sample(index, index < 4_000 ? 1 : 2),
+    );
+    const presentation = buildHeartRateRoutePresentation({
+      id: "large-activity",
+      samples,
+      heartRateZones: zones,
+    });
+
+    expect(presentation.data.features).toHaveLength(1);
+    expect(presentation.data.features[0]?.geometry.coordinates).toHaveLength(12_441);
+    expect(presentation.gradient).toHaveLength(5);
+    expect(presentation.hasZoneColors).toBe(true);
   });
 });
