@@ -10,9 +10,11 @@ import {
   useState,
 } from "react";
 import maplibregl, { type Map as MapLibreMap } from "maplibre-gl";
+import type { ErrorEvent as MapLibreErrorEvent } from "maplibre-gl";
 
 interface MapContextValue {
   map: MapLibreMap | null;
+  styleRevision: number;
   containerRef: RefCallback<HTMLDivElement>;
   contextLost: boolean;
   initializationError: string | null;
@@ -25,6 +27,7 @@ const DEFAULT_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 export function MapProvider({ children }: PropsWithChildren) {
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const [map, setMap] = useState<MapLibreMap | null>(null);
+  const [styleRevision, setStyleRevision] = useState(0);
   const [contextLost, setContextLost] = useState(false);
   const [initializationError, setInitializationError] = useState<string | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -45,7 +48,7 @@ export function MapProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     if (!container || mapRef.current) return;
 
-    let instance: MapLibreMap;
+    let instance: MapLibreMap | null = null;
     try {
       instance = new maplibregl.Map({
         container,
@@ -57,7 +60,6 @@ export function MapProvider({ children }: PropsWithChildren) {
         attributionControl: false,
         cooperativeGestures: true,
       });
-      instance.setProjection({ type: "globe" });
       instance.addControl(
         new maplibregl.NavigationControl({ showCompass: true, visualizePitch: true }),
         "top-right",
@@ -67,6 +69,7 @@ export function MapProvider({ children }: PropsWithChildren) {
         "bottom-right",
       );
     } catch (error) {
+      instance?.remove();
       setInitializationError(
         error instanceof Error ? error.message : "The WebGL map could not be initialized.",
       );
@@ -75,6 +78,21 @@ export function MapProvider({ children }: PropsWithChildren) {
 
     mapRef.current = instance;
     setMap(instance);
+    setStyleRevision(0);
+    setInitializationError(null);
+    let styleHasLoaded = false;
+    const handleStyleLoad = () => {
+      styleHasLoaded = true;
+      setInitializationError(null);
+      setStyleRevision((current) => current + 1);
+    };
+    const handleMapError = (event: MapLibreErrorEvent) => {
+      if (styleHasLoaded) return;
+      setInitializationError(`The map style could not be loaded. ${event.error.message}`);
+    };
+    instance.on("style.load", handleStyleLoad);
+    instance.on("error", handleMapError);
+
     const canvas = instance.getCanvas();
     const handleContextLost = (event: Event) => {
       event.preventDefault();
@@ -99,16 +117,19 @@ export function MapProvider({ children }: PropsWithChildren) {
       window.removeEventListener("orientationchange", requestResize);
       canvas.removeEventListener("webglcontextlost", handleContextLost);
       canvas.removeEventListener("webglcontextrestored", handleContextRestored);
+      instance.off("style.load", handleStyleLoad);
+      instance.off("error", handleMapError);
       if (resizeFrameRef.current !== null) cancelAnimationFrame(resizeFrameRef.current);
       instance.remove();
       mapRef.current = null;
       setMap(null);
+      setStyleRevision(0);
     };
   }, [container, requestResize]);
 
   const value = useMemo(
-    () => ({ map, containerRef, contextLost, initializationError, requestResize }),
-    [map, containerRef, contextLost, initializationError, requestResize],
+    () => ({ map, styleRevision, containerRef, contextLost, initializationError, requestResize }),
+    [map, styleRevision, containerRef, contextLost, initializationError, requestResize],
   );
   return <MapContext.Provider value={value}>{children}</MapContext.Provider>;
 }

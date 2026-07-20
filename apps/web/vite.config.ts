@@ -42,7 +42,21 @@ export default defineConfig({
         cleanupOutdatedCaches: true,
         clientsClaim: true,
         skipWaiting: true,
-        runtimeCaching: []
+        runtimeCaching: [
+          {
+            urlPattern: /^https:\/\/tiles\.openfreemap\.org\//,
+            handler: "CacheFirst",
+            options: {
+              cacheName: "openfreemap-v1",
+              cacheableResponse: { statuses: [0, 200] },
+              expiration: {
+                maxEntries: 512,
+                maxAgeSeconds: 7 * 24 * 60 * 60,
+                purgeOnQuotaError: true
+              }
+            }
+          }
+        ]
       }
     })
   ],

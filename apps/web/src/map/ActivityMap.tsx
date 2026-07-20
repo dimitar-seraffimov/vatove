@@ -57,7 +57,7 @@ function ensureRouteLayer(map: MapLibreMap, activity: ActivityDetail | null): vo
   }
 }
 
-function fitRoute(map: MapLibreMap, activity: ActivityDetail): void {
+function fitRoute(map: MapLibreMap, activity: ActivityDetail, duration: number): void {
   const coordinates = activity.route?.geometry.coordinates;
   if (!coordinates || coordinates.length < 2) return;
   const first = coordinates[0];
@@ -69,7 +69,7 @@ function fitRoute(map: MapLibreMap, activity: ActivityDetail): void {
   map.fitBounds(bounds, {
     padding: { top: 72, right: 52, bottom: 72, left: 52 },
     maxZoom: 15,
-    duration: 700,
+    duration,
   });
 }
 
@@ -79,12 +79,13 @@ export interface ActivityMapProps {
 }
 
 export function ActivityMap({ activity, loading = false }: ActivityMapProps) {
-  const { map, containerRef, contextLost, initializationError } = useMap();
+  const { map, styleRevision, containerRef, contextLost, initializationError } = useMap();
   const { activeSampleIndex, setActiveSampleIndex } = useTooltip();
   const markerRef = useRef<Marker | null>(null);
+  const hasFittedRouteRef = useRef(false);
 
   useEffect(() => {
-    if (!map) return;
+    if (!map || styleRevision === 0) return;
     let eventsAttached = false;
     const onRouteClick = (event: MapLayerMouseEvent) => {
       if (!activity?.route) return;
@@ -107,24 +108,25 @@ export function ActivityMap({ activity, loading = false }: ActivityMapProps) {
       map.on("mouseenter", ROUTE_LAYER_ID, onRouteEnter);
       map.on("mouseleave", ROUTE_LAYER_ID, onRouteLeave);
       eventsAttached = true;
-      if (activity) fitRoute(map, activity);
+      if (activity?.route) {
+        fitRoute(map, activity, hasFittedRouteRef.current ? 500 : 0);
+        hasFittedRouteRef.current = true;
+      }
     };
 
-    if (map.isStyleLoaded()) applyActivity();
-    else map.once("load", applyActivity);
+    applyActivity();
 
     return () => {
-      map.off("load", applyActivity);
       if (eventsAttached) {
         map.off("click", ROUTE_LAYER_ID, onRouteClick);
         map.off("mouseenter", ROUTE_LAYER_ID, onRouteEnter);
         map.off("mouseleave", ROUTE_LAYER_ID, onRouteLeave);
       }
     };
-  }, [activity, map, setActiveSampleIndex]);
+  }, [activity, map, setActiveSampleIndex, styleRevision]);
 
   useEffect(() => {
-    if (!map) return;
+    if (!map || styleRevision === 0) return;
     const sample = activity?.samples.find((item) => item.index === activeSampleIndex);
     if (!sample || !Number.isFinite(sample.longitude) || !Number.isFinite(sample.latitude)) {
       markerRef.current?.remove();
@@ -142,7 +144,7 @@ export function ActivityMap({ activity, loading = false }: ActivityMapProps) {
     } else {
       markerRef.current.setLngLat([sample.longitude, sample.latitude]);
     }
-  }, [activeSampleIndex, activity, map]);
+  }, [activeSampleIndex, activity, map, styleRevision]);
 
   useEffect(
     () => () => {
@@ -152,13 +154,19 @@ export function ActivityMap({ activity, loading = false }: ActivityMapProps) {
     [],
   );
 
-  const noRoute = !loading && activity !== null && !activity.route;
-  const noSelection = !loading && activity === null;
+  const mapLoading = styleRevision === 0 && initializationError === null;
+  const mapAvailable = !mapLoading && initializationError === null;
+  const noRoute = !loading && mapAvailable && activity !== null && !activity.route;
+  const noSelection = !loading && mapAvailable && activity === null;
 
   return (
     <div className="map-shell" aria-label="Activity route map">
       <div ref={containerRef} className="map-canvas" />
-      {loading && <div className="map-overlay map-overlay--quiet">Loading route…</div>}
+      {(loading || mapLoading) && (
+        <div className="map-overlay map-overlay--quiet">
+          {mapLoading ? "Loading map…" : "Loading route…"}
+        </div>
+      )}
       {noSelection && (
         <div className="map-overlay">
           <span className="eyebrow">Your terrain awaits</span>
