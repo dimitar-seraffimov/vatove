@@ -46,6 +46,7 @@ export interface ActivitySample {
   elapsedSeconds: number | null;
   distanceMeters: number | null;
   elevationMeters: number | null;
+  speedMetersPerSecond: number | null;
   heartRateBpm: number | null;
   heartRateZone: number | null;
 }

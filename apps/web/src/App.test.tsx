@@ -225,6 +225,7 @@ describe("application navigation and analysis state", () => {
       const summary = summaries.find((item) => item.id === id)!;
       return {
         ...detailFor(summary),
+        sport: "Run",
         samples: [0, 1, 2].map((index) => ({
           index,
           sourceIndex: index,
@@ -233,6 +234,7 @@ describe("application navigation and analysis state", () => {
           elapsedSeconds: index * 30,
           distanceMeters: index * 100,
           elevationMeters: null,
+          speedMetersPerSecond: 3.3,
           heartRateBpm: null,
           heartRateZone: null,
         })),

@@ -139,6 +139,86 @@ describe("activity queries", () => {
       ],
     });
   });
+
+  it("recovers dynamic zones and legacy sample speed from stored raw activity metadata", async () => {
+    const pool = {
+      query: async () => ({
+        rows: [
+          {
+            id: "0a02e7b4-5b09-45bb-aafb-9a4597d3a0bb",
+            source: "intervals",
+            source_activity_id: "i123",
+            name: "Morning Ride",
+            sport: "Ride",
+            start_at: "2026-07-20T08:00:00.000Z",
+            moving_time_seconds: 3600,
+            distance_meters: "25000",
+            has_route: true,
+            has_heart_rate: true,
+            has_elevation: false,
+            average_heart_rate_bpm: 145,
+            max_heart_rate_bpm: 178,
+            route_geometry: {
+              type: "LineString",
+              coordinates: [
+                [-0.1, 51.5],
+                [-0.2, 51.6],
+              ],
+            },
+            samples: [
+              {
+                index: 0,
+                sourceIndex: 0,
+                longitude: -0.1,
+                latitude: 51.5,
+                elapsedSeconds: 0,
+                distanceMeters: 0,
+                elevationMeters: null,
+                heartRateBpm: 145,
+                heartRateZone: null,
+              },
+            ],
+            heart_rate_zones: [],
+            raw_metadata: {
+              icu_hr_zones: [120, 150, 180],
+              icu_hr_zone_times: [10, 20, 30],
+            },
+          },
+        ],
+      }),
+    } as unknown as Pool;
+    const store = new PostgresActivitiesStore(pool);
+
+    const detail = await store.findById("0a02e7b4-5b09-45bb-aafb-9a4597d3a0bb");
+
+    expect(detail?.samples[0]?.speedMetersPerSecond).toBeNull();
+    expect(detail?.heartRateZones).toEqual([
+      {
+        index: 1,
+        label: "Z1",
+        color: "#3b82f6",
+        minBpm: null,
+        maxBpm: 120,
+        durationSeconds: 10,
+      },
+      {
+        index: 2,
+        label: "Z2",
+        color: "#22c55e",
+        minBpm: 121,
+        maxBpm: 150,
+        durationSeconds: 20,
+      },
+      {
+        index: 3,
+        label: "Z3",
+        color: "#eab308",
+        minBpm: 151,
+        maxBpm: 180,
+        durationSeconds: 30,
+      },
+    ]);
+  });
 });
 
 describe("activity cursors", () => {

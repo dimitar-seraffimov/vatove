@@ -14,6 +14,7 @@ function sample(index: number, heartRateZone: number | null): ActivitySample {
     elapsedSeconds: index,
     distanceMeters: index * 10,
     elevationMeters: 100,
+    speedMetersPerSecond: null,
     heartRateBpm: heartRateZone === null ? null : 140,
     heartRateZone,
   };

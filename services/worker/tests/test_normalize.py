@@ -53,6 +53,7 @@ def test_normalization_aligns_map_source_indices_and_streams(fixture_json: Any) 
     assert [sample["sourceIndex"] for sample in persisted_samples] == [0, 2, 4]
     assert [sample["elapsedSeconds"] for sample in persisted_samples] == [0.0, 10.0, 20.0]
     assert [sample["heartRateZone"] for sample in persisted_samples] == [1, 2, 4]
+    assert [sample["speedMetersPerSecond"] for sample in persisted_samples] == [2.5, 3.6, 4.2]
     assert len(activity.route_coordinates) == len(activity.samples)
     assert len(activity.heart_rate_zones) == 4
     assert [zone.label for zone in activity.heart_rate_zones] == [
@@ -84,7 +85,7 @@ def test_missing_heart_rate_produces_neutral_route(fixture_json: Any) -> None:
     activity = normalize_activity(fetched, [])
     assert all(sample.heart_rate_bpm is None for sample in activity.samples)
     assert all(sample.heart_rate_zone is None for sample in activity.samples)
-    assert activity.heart_rate_zones == []
+    assert [zone.max_bpm for zone in activity.heart_rate_zones] == [120, 140, 160, 180]
 
 
 def test_missing_elevation_keeps_route_with_null_elevation(fixture_json: Any) -> None:
@@ -136,8 +137,27 @@ def test_unknown_sport_uses_unique_other_setting(fixture_json: Any) -> None:
     assert select_sport_settings("Kayak", settings) is settings[1]
 
 
+def test_activity_zone_snapshot_survives_a_missing_sport_settings_match(
+    fixture_json: Any,
+) -> None:
+    fetched = fetched_from_fixtures(fixture_json)
+    activity = normalize_activity(
+        fetched,
+        [IntervalsSportSettings(types=["Run"], hr_zones=[100, 120])],
+    )
+
+    assert [zone.max_bpm for zone in activity.heart_rate_zones] == [120, 140, 160, 180]
+    assert [sample.heart_rate_zone for sample in activity.samples] == [1, 2, 4]
+
+
 def test_malformed_zone_settings_do_not_fail_activity(fixture_json: Any) -> None:
     fetched = fetched_from_fixtures(fixture_json)
+    fetched = FetchedActivity(
+        fetched.activity.model_copy(update={"icu_hr_zones": []}),
+        fetched.raw_activity,
+        fetched.map_points,
+        fetched.streams,
+    )
     invalid = IntervalsSportSettings(
         types=["Ride"],
         hr_zones=[120, "bad", 180],

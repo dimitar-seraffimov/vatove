@@ -11,6 +11,7 @@ function samples(): ActivitySample[] {
     elapsedSeconds: position * 60,
     distanceMeters: position * 1_000,
     elevationMeters: 100 + position,
+    speedMetersPerSecond: 2,
     heartRateBpm: 130,
     heartRateZone: 1,
   }));

@@ -233,7 +233,7 @@ components:
           items: { $ref: "#/components/schemas/LineStringFeature" }
     ActivitySample:
       type: object
-      required: [index, sourceIndex, longitude, latitude, elapsedSeconds, distanceMeters, elevationMeters, heartRateBpm, heartRateZone]
+      required: [index, sourceIndex, longitude, latitude, elapsedSeconds, distanceMeters, elevationMeters, speedMetersPerSecond, heartRateBpm, heartRateZone]
       properties:
         index: { type: integer, minimum: 0 }
         sourceIndex: { type: integer, minimum: 0 }
@@ -242,6 +242,7 @@ components:
         elapsedSeconds: { type: [number, "null"] }
         distanceMeters: { type: [number, "null"] }
         elevationMeters: { type: [number, "null"] }
+        speedMetersPerSecond: { type: [number, "null"] }
         heartRateBpm: { type: [integer, "null"] }
         heartRateZone: { type: [integer, "null"] }
     HeartRateZone:

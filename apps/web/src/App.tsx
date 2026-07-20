@@ -64,30 +64,48 @@ export default function App() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [syncRun, setSyncRun] = useState<SyncRun | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [detailRevision, setDetailRevision] = useState(0);
   const fitTimerRef = useRef<number | null>(null);
   const detailCacheRef = useRef(new Map<string, ActivityDetail>());
-  const detailRequestsRef = useRef(new Map<string, Promise<ActivityDetail>>());
+  const detailGenerationRef = useRef(0);
+  const detailRequestsRef = useRef(
+    new Map<string, { generation: number; request: Promise<ActivityDetail> }>(),
+  );
 
   const loadActivityDetail = useCallback((id: string): Promise<ActivityDetail> => {
     const cached = detailCacheRef.current.get(id);
     if (cached) return Promise.resolve(cached);
 
+    const generation = detailGenerationRef.current;
     const pending = detailRequestsRef.current.get(id);
-    if (pending) return pending;
+    if (pending?.generation === generation) return pending.request;
 
     const request = getActivity(id).then(
       (activity) => {
-        detailCacheRef.current.set(id, activity);
-        detailRequestsRef.current.delete(id);
+        if (detailGenerationRef.current === generation) {
+          detailCacheRef.current.set(id, activity);
+        }
+        if (detailRequestsRef.current.get(id)?.request === request) {
+          detailRequestsRef.current.delete(id);
+        }
         return activity;
       },
       (error: unknown) => {
-        detailRequestsRef.current.delete(id);
+        if (detailRequestsRef.current.get(id)?.request === request) {
+          detailRequestsRef.current.delete(id);
+        }
         throw error;
       },
     );
-    detailRequestsRef.current.set(id, request);
+    detailRequestsRef.current.set(id, { generation, request });
     return request;
+  }, []);
+
+  const invalidateActivityDetails = useCallback(() => {
+    detailGenerationRef.current += 1;
+    detailCacheRef.current.clear();
+    detailRequestsRef.current.clear();
+    setDetailRevision((revision) => revision + 1);
   }, []);
 
   const prefetchActivity = useCallback(
@@ -145,7 +163,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [loadActivityDetail, selectedId]);
+  }, [detailRevision, loadActivityDetail, selectedId]);
 
   const syncing = syncRun?.status === "queued" || syncRun?.status === "running";
   const syncRunId = syncRun?.id;
@@ -163,6 +181,7 @@ export default function App() {
         if (next.status === "queued" || next.status === "running") {
           timer = window.setTimeout(() => void poll(), 1_250);
         } else if (next.status === "completed") {
+          invalidateActivityDetails();
           await Promise.all([refreshActivities(), refreshRoutes()]);
         }
       } catch (error) {
@@ -174,7 +193,7 @@ export default function App() {
       controller.abort();
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [refreshActivities, refreshRoutes, syncRunId, syncRunStatus]);
+  }, [invalidateActivityDetails, refreshActivities, refreshRoutes, syncRunId, syncRunStatus]);
 
   useEffect(() => {
     if (syncRun?.status !== "completed" || syncError) return;
@@ -384,7 +403,9 @@ export default function App() {
               onToggleExpanded={toggleDetailsExpanded}
             />
           )}
-          {visibleDetail && <PaceChart samples={visibleDetail.samples} />}
+          {visibleDetail && (
+            <PaceChart samples={visibleDetail.samples} sport={visibleDetail.sport} />
+          )}
           {visibleDetail && <SpeedChart samples={visibleDetail.samples} />}
           {visibleDetail && hasElevationProfile && <ElevationChart samples={visibleDetail.samples} />}
           {visibleDetail && hasHeartRateProfile && (

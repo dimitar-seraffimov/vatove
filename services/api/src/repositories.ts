@@ -53,6 +53,7 @@ interface ActivityDetailRow extends ActivityRow {
   route_geometry: { type: "LineString"; coordinates: [number, number][] } | string | null;
   samples: ActivitySample[] | string | null;
   heart_rate_zones: HeartRateZone[] | string | null;
+  raw_metadata: Record<string, unknown> | string | null;
 }
 
 interface ActivityRouteRow extends QueryResultRow {
@@ -273,7 +274,8 @@ export class PostgresActivitiesStore implements ActivitiesStore {
                a.max_heart_rate_bpm,
                ST_AsGeoJSON(a.route, 7)::jsonb AS route_geometry,
                a.samples,
-               a.heart_rate_zones
+               a.heart_rate_zones,
+               a.raw_metadata
         FROM activities a
         WHERE a.id = $1::uuid
       `,
@@ -295,8 +297,8 @@ export class PostgresActivitiesStore implements ActivitiesStore {
             properties: { activityId: row.id },
           }
         : null,
-      samples: asArray<ActivitySample>(row.samples),
-      heartRateZones: normalizeHeartRateZones(row.heart_rate_zones),
+      samples: normalizeActivitySamples(row.samples),
+      heartRateZones: normalizeHeartRateZones(row.heart_rate_zones, row.raw_metadata),
     };
   }
 }
@@ -359,7 +361,24 @@ function isLineStringGeometry(value: unknown): value is GeoJsonLineStringFeature
   return candidate.type === "LineString" && Array.isArray(candidate.coordinates);
 }
 
-function normalizeHeartRateZones(value: unknown): HeartRateZone[] {
+function normalizeActivitySamples(value: unknown): ActivitySample[] {
+  return asArray<ActivitySample & { speedMetersPerSecond?: unknown }>(value).map((sample) => ({
+    ...sample,
+    speedMetersPerSecond: nullableNumber(sample.speedMetersPerSecond),
+  }));
+}
+
+const HEART_RATE_ZONE_COLORS = [
+  "#3b82f6",
+  "#22c55e",
+  "#eab308",
+  "#f97316",
+  "#ef4444",
+  "#a855f7",
+  "#7f1d1d",
+] as const;
+
+function normalizeStoredHeartRateZones(value: unknown): HeartRateZone[] {
   return asArray<Record<string, unknown>>(value).flatMap((zone) => {
     if (
       typeof zone.index !== "number" ||
@@ -385,6 +404,44 @@ function normalizeHeartRateZones(value: unknown): HeartRateZone[] {
       },
     ];
   });
+}
+
+function positiveIncreasingNumbers(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  const numbers: number[] = [];
+  for (const item of value) {
+    const number = nullableNumber(item);
+    if (number === null || number <= 0 || (numbers.at(-1) ?? 0) >= number) return [];
+    numbers.push(number);
+  }
+  return numbers;
+}
+
+function zonesFromRawMetadata(value: unknown): HeartRateZone[] {
+  const metadata = parseJson(value);
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return [];
+  const raw = metadata as Record<string, unknown>;
+  const thresholds = positiveIncreasingNumbers(raw.icu_hr_zones);
+  if (thresholds.length === 0) return [];
+  const durations = Array.isArray(raw.icu_hr_zone_times) ? raw.icu_hr_zone_times : [];
+
+  return thresholds.map((maximum, offset) => ({
+    index: offset + 1,
+    label: `Z${offset + 1}`,
+    color:
+      HEART_RATE_ZONE_COLORS[Math.min(offset, HEART_RATE_ZONE_COLORS.length - 1)] ?? "#7f1d1d",
+    minBpm: offset === 0 ? null : (thresholds[offset - 1] as number) + 1,
+    maxBpm: maximum,
+    durationSeconds: (() => {
+      const duration = nullableNumber(durations[offset]);
+      return duration !== null && duration >= 0 ? duration : null;
+    })(),
+  }));
+}
+
+function normalizeHeartRateZones(value: unknown, rawMetadata: unknown): HeartRateZone[] {
+  const stored = normalizeStoredHeartRateZones(value);
+  return stored.length > 0 ? stored : zonesFromRawMetadata(rawMetadata);
 }
 
 export function sanitizeWorkerError(value: string | null): string | null {

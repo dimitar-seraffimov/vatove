@@ -81,7 +81,9 @@ def test_fetch_activity_uses_basic_auth_and_expected_endpoints(fixture_json: Any
         "/api/v1/activity/i9001",
         "/api/v1/activity/i9001/streams.json",
     ]
-    assert requests[-1].url.params["types"] == "time,distance,heartrate,altitude,latlng"
+    assert requests[-1].url.params["types"] == (
+        "time,distance,heartrate,altitude,velocity_smooth,latlng"
+    )
     expected = "Basic " + base64.b64encode(b"API_KEY:secret-key").decode()
     assert all(request.headers["Authorization"] == expected for request in requests)
     assert all("Mozilla/5.0" in request.headers["User-Agent"] for request in requests)
@@ -140,12 +142,14 @@ def test_analysis_boundaries_tolerate_invalid_optional_values() -> None:
             "average_heartrate": "not-a-number",
             "max_heartrate": False,
             "icu_hr_zone_times": "not-an-array",
+            "icu_hr_zones": "not-an-array",
         }
     )
 
     assert activity.average_heartrate is None
     assert activity.max_heartrate is None
     assert activity.icu_hr_zone_times is None
+    assert activity.icu_hr_zones == []
 
 
 def test_sport_settings_boundary_tolerates_null_arrays() -> None:

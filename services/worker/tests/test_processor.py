@@ -148,6 +148,7 @@ def test_missing_projected_analysis_preserves_activity_detail_values() -> None:
                 "average_heartrate": 141,
                 "max_heartrate": 176,
                 "icu_hr_zone_times": [11, 22, 33],
+                "icu_hr_zones": [121, 151, 181],
             }
         ),
         fetched.raw_activity,
@@ -159,6 +160,7 @@ def test_missing_projected_analysis_preserves_activity_detail_values() -> None:
             "average_heartrate": None,
             "max_heartrate": None,
             "icu_hr_zone_times": None,
+            "icu_hr_zones": [],
         }
     )
 
@@ -167,3 +169,4 @@ def test_missing_projected_analysis_preserves_activity_detail_values() -> None:
     assert merged.activity.average_heartrate == 141
     assert merged.activity.max_heartrate == 176
     assert merged.activity.icu_hr_zone_times == [11, 22, 33]
+    assert merged.activity.icu_hr_zones == [121, 151, 181]

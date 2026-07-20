@@ -39,7 +39,7 @@ def normalize_activity(
     relevant = {
         name: values
         for name, values in streams.items()
-        if name in {"time", "distance", "heartrate", "altitude"}
+        if name in {"time", "distance", "heartrate", "altitude", "velocity_smooth"}
     }
     populated_lengths = {len(values) for values in relevant.values() if values}
     if len(populated_lengths) > 1:
@@ -67,18 +67,27 @@ def normalize_activity(
     setting = select_sport_settings(fetched.activity.sport, sport_settings)
     thresholds: list[float] = []
     labels: list[str] = []
-    if setting is not None:
+    threshold_candidates = [
+        ("activity", fetched.activity.icu_hr_zones),
+        ("sport settings", setting.hr_zones if setting is not None else []),
+    ]
+    for source, values in threshold_candidates:
+        if not values:
+            continue
         try:
-            thresholds = _validated_thresholds(setting.hr_zones)
+            thresholds = _validated_thresholds(values)
         except IntervalsPayloadError as error:
             logger.warning(
-                "Ignoring invalid heart-rate zones for activity %s (%s): %s",
+                "Ignoring invalid %s heart-rate zones for activity %s (%s): %s",
+                source,
                 fetched.activity.id,
                 fetched.activity.sport,
                 error,
             )
-        else:
-            labels = _zone_labels(setting.hr_zone_names, len(thresholds))
+            continue
+        break
+    if thresholds and setting is not None:
+        labels = _zone_labels(setting.hr_zone_names, len(thresholds))
     zones = build_heart_rate_zones(
         thresholds,
         labels=labels,
@@ -94,6 +103,9 @@ def normalize_activity(
             elapsed = _stream_float(relevant.get("time"), source_index, "time")
             distance = _stream_float(relevant.get("distance"), source_index, "distance")
             elevation = _stream_float(relevant.get("altitude"), source_index, "altitude")
+            speed = _stream_float(
+                relevant.get("velocity_smooth"), source_index, "velocity_smooth"
+            )
             heart_rate_value = _stream_float(
                 relevant.get("heartrate"), source_index, "heartrate"
             )
@@ -110,6 +122,7 @@ def normalize_activity(
                         "elapsedSeconds": elapsed,
                         "distanceMeters": distance,
                         "elevationMeters": elevation,
+                        "speedMetersPerSecond": speed,
                         "heartRateBpm": heart_rate,
                         "heartRateZone": zone,
                     }

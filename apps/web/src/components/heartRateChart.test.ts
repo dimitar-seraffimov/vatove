@@ -18,6 +18,7 @@ function sample(
     elapsedSeconds: index,
     distanceMeters: index * 100,
     elevationMeters: null,
+    speedMetersPerSecond: null,
     heartRateBpm,
     heartRateZone,
   };

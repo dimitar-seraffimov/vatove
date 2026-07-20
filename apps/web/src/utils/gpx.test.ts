@@ -31,6 +31,7 @@ function activity(): ActivityDetail {
         elapsedSeconds: 5.5,
         distanceMeters: 0,
         elevationMeters: 123.45678,
+        speedMetersPerSecond: 3.2,
         heartRateBpm: 145,
         heartRateZone: 2,
       },

@@ -8,44 +8,29 @@ function finite(value: number | null): value is number {
 }
 
 /**
- * Derives segment pace/speed from the persisted distance and elapsed-time
- * streams. Invalid, stationary, reversed, and zero-duration intervals are
- * omitted instead of creating spikes or infinite pace values.
+ * Converts Intervals' persisted `velocity_smooth` stream into display pace or
+ * speed. Invalid and stationary samples are omitted instead of creating
+ * spikes or infinite pace values.
  */
 export function buildMotionChartData(
   samples: readonly ActivitySample[],
   metric: MotionMetric,
+  paceDistanceMeters = 1_000,
 ): MetricChartData {
-  const points: MetricChartPoint[] = [];
-  let previous: ActivitySample | null = null;
-
-  for (const sample of samples) {
-    if (!finite(sample.distanceMeters) || !finite(sample.elapsedSeconds)) {
-      previous = null;
-      continue;
-    }
-
-    if (
-      previous &&
-      finite(previous.distanceMeters) &&
-      finite(previous.elapsedSeconds)
-    ) {
-      const distanceDelta = sample.distanceMeters - previous.distanceMeters;
-      const timeDelta = sample.elapsedSeconds - previous.elapsedSeconds;
-      if (distanceDelta > 0 && timeDelta > 0) {
-        points.push({
-          sampleIndex: sample.index,
-          x: sample.distanceMeters,
-          value:
-            metric === "pace"
-              ? (timeDelta / distanceDelta) * 1_000
-              : (distanceDelta / timeDelta) * 3.6,
-        });
-      }
-    }
-
-    previous = sample;
-  }
+  const validSamples = samples.filter(
+    (sample) =>
+      finite(sample.speedMetersPerSecond) &&
+      sample.speedMetersPerSecond > 0 &&
+      finite(sample.distanceMeters),
+  );
+  const points: MetricChartPoint[] = validSamples.map((sample) => ({
+    sampleIndex: sample.index,
+    x: sample.distanceMeters as number,
+    value:
+      metric === "pace"
+        ? paceDistanceMeters / (sample.speedMetersPerSecond as number)
+        : (sample.speedMetersPerSecond as number) * 3.6,
+  }));
 
   return { points, usesDistance: true };
 }

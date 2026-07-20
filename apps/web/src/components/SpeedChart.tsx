@@ -18,7 +18,7 @@ export function SpeedChart({ samples }: SpeedChartProps) {
       usesDistance={data.usesDistance}
       eyebrow="Motion trace"
       title="Speed"
-      description="Speed profile derived from distance and elapsed time. Move across the chart to inspect the route."
+      description="Speed profile from the Intervals speed stream. Move across the chart to inspect the route."
       yPadding={1}
       formatValue={formatSpeed}
       className="speed-chart"

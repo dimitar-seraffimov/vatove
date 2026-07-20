@@ -2,15 +2,20 @@ import type { ActivitySample } from "@vatove/contracts";
 import { describe, expect, it } from "vitest";
 import { buildMotionChartData } from "./motionChartData";
 
-function sample(index: number, distanceMeters: number | null, elapsedSeconds: number | null): ActivitySample {
+function sample(
+  index: number,
+  distanceMeters: number | null,
+  speedMetersPerSecond: number | null,
+): ActivitySample {
   return {
     index,
     sourceIndex: index,
     longitude: 0,
     latitude: 0,
-    elapsedSeconds,
+    elapsedSeconds: index * 10,
     distanceMeters,
     elevationMeters: null,
+    speedMetersPerSecond,
     heartRateBpm: null,
     heartRateZone: null,
   };
@@ -18,39 +23,43 @@ function sample(index: number, distanceMeters: number | null, elapsedSeconds: nu
 
 describe("buildMotionChartData", () => {
   const samples = [
-    sample(0, 0, 0),
-    sample(1, 100, 30),
-    sample(2, 300, 70),
+    sample(0, 100, 10 / 3),
+    sample(1, 300, 5),
   ];
 
-  it("derives seconds per kilometre at the destination sample", () => {
+  it("converts Intervals velocity into seconds per kilometre", () => {
     expect(buildMotionChartData(samples, "pace").points).toEqual([
-      { sampleIndex: 1, x: 100, value: 300 },
-      { sampleIndex: 2, x: 300, value: 200 },
+      { sampleIndex: 0, x: 100, value: 300 },
+      { sampleIndex: 1, x: 300, value: 200 },
     ]);
   });
 
-  it("derives kilometres per hour from the same intervals", () => {
-    expect(buildMotionChartData(samples, "speed").points.map((point) => point.value)).toEqual([
-      12,
-      18,
+  it("converts the same Intervals velocity into kilometres per hour", () => {
+    const values = buildMotionChartData(samples, "speed").points.map((point) => point.value);
+    expect(values[0]).toBeCloseTo(12);
+    expect(values[1]).toBeCloseTo(18);
+  });
+
+  it("formats swimming pace against 100 metres", () => {
+    expect(buildMotionChartData(samples, "pace", 100).points.map((point) => point.value)).toEqual([
+      30,
+      20,
     ]);
   });
 
-  it("omits gaps, stationary samples, resets, and zero-duration intervals", () => {
+  it("omits missing, stationary, negative, non-finite, or positionless velocity samples", () => {
     const data = buildMotionChartData(
       [
-        sample(0, 0, 0),
-        sample(1, 0, 10),
-        sample(2, null, 20),
-        sample(3, 100, 30),
-        sample(4, 90, 40),
-        sample(5, 120, 40),
-        sample(6, 150, 50),
+        sample(0, 0, null),
+        sample(1, 10, 0),
+        sample(2, 20, -1),
+        sample(3, 30, Number.NaN),
+        sample(4, null, 3),
+        sample(5, 50, 3),
       ],
       "speed",
     );
 
-    expect(data.points).toEqual([{ sampleIndex: 6, x: 150, value: 10.8 }]);
+    expect(data.points).toEqual([{ sampleIndex: 5, x: 50, value: 10.8 }]);
   });
 });

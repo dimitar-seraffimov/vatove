@@ -36,6 +36,7 @@ ACTIVITY_FIELDS = ",".join(
         "average_heartrate",
         "max_heartrate",
         "icu_hr_zone_times",
+        "icu_hr_zones",
     )
 )
 
@@ -169,7 +170,7 @@ class IntervalsClient:
 
         raw_streams = self._get_json(
             f"/api/v1/activity/{activity_id}/streams.json",
-            params={"types": "time,distance,heartrate,altitude,latlng"},
+            params={"types": "time,distance,heartrate,altitude,velocity_smooth,latlng"},
         )
         try:
             streams = TypeAdapter(list[IntervalsStream]).validate_python(raw_streams)

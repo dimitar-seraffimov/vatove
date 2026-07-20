@@ -57,7 +57,7 @@ class IntervalsActivity(BaseModel):
     average_heartrate: float | None = None
     max_heartrate: float | None = None
     icu_hr_zone_times: list[Any] | None = None
-    icu_hr_zones: list[float] = Field(default_factory=list)
+    icu_hr_zones: list[Any] = Field(default_factory=list)
     source_updated_at: datetime | None = None
 
     @model_validator(mode="before")
@@ -99,6 +99,11 @@ class IntervalsActivity(BaseModel):
     @classmethod
     def tolerate_invalid_zone_times(cls, value: Any) -> list[Any] | None:
         return value if isinstance(value, list) else None
+
+    @field_validator("icu_hr_zones", mode="before")
+    @classmethod
+    def tolerate_invalid_zones(cls, value: Any) -> list[Any]:
+        return value if isinstance(value, list) else []
 
     @field_validator("start_at", "source_updated_at")
     @classmethod
@@ -165,6 +170,7 @@ class NormalizedSample(BaseModel):
     elapsed_seconds: float | None = Field(alias="elapsedSeconds")
     distance_meters: float | None = Field(alias="distanceMeters")
     elevation_meters: float | None = Field(alias="elevationMeters")
+    speed_meters_per_second: float | None = Field(alias="speedMetersPerSecond")
     heart_rate_bpm: int | None = Field(alias="heartRateBpm")
     heart_rate_zone: int | None = Field(alias="heartRateZone")
 

@@ -70,6 +70,11 @@ def _merge_activity_analysis(
             if summary.icu_hr_zone_times is not None
             else fetched.activity.icu_hr_zone_times
         ),
+        "icu_hr_zones": (
+            summary.icu_hr_zones
+            if summary.icu_hr_zones
+            else fetched.activity.icu_hr_zones
+        ),
     }
     return FetchedActivity(
         activity=fetched.activity.model_copy(update=analysis),
