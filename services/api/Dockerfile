@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim AS build
+FROM docker.io/library/node:24-bookworm-slim AS build
 
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.base.json ./
@@ -13,7 +13,7 @@ RUN npm ci --include=dev \
     && npm run build --workspace @vatove/api \
     && npm prune --omit=dev
 
-FROM node:24-bookworm-slim AS runtime
+FROM docker.io/library/node:24-bookworm-slim AS runtime
 
 ENV NODE_ENV=production
 WORKDIR /app

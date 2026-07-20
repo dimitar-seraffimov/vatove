@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim AS web-build
+FROM docker.io/library/node:24-bookworm-slim AS web-build
 WORKDIR /workspace
 
 COPY package.json package-lock.json tsconfig.base.json ./
@@ -15,7 +15,7 @@ ARG VITE_MAP_STYLE_URL=https://tiles.openfreemap.org/styles/liberty
 ENV VITE_MAP_STYLE_URL=$VITE_MAP_STYLE_URL
 RUN npm run build --workspace @vatove/contracts && npm run build --workspace @vatove/web
 
-FROM nginx:1.29-alpine
+FROM docker.io/library/nginx:1.29-alpine
 COPY infra/nginx/nginx.conf /etc/nginx/nginx.conf
 COPY --from=web-build /workspace/apps/web/dist /usr/share/nginx/html
 EXPOSE 8080

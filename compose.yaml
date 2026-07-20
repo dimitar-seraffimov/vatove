@@ -2,7 +2,7 @@ name: vatove
 
 services:
   postgis:
-    image: postgis/postgis:18-3.6
+    image: docker.io/postgis/postgis:18-3.6
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-vatove}
       POSTGRES_USER: ${POSTGRES_USER:-vatove}
@@ -19,7 +19,7 @@ services:
     restart: unless-stopped
 
   kafka:
-    image: apache/kafka:4.3.1
+    image: docker.io/apache/kafka:4.3.1
     hostname: kafka
     environment:
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
@@ -50,7 +50,7 @@ services:
     restart: unless-stopped
 
   kafka-init:
-    image: apache/kafka:4.3.1
+    image: docker.io/apache/kafka:4.3.1
     depends_on:
       kafka:
         condition: service_healthy
