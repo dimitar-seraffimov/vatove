@@ -1,6 +1,9 @@
 import type { HeartRateZone } from "@vatove/contracts";
 import { describe, expect, it } from "vitest";
-import { resolveSampleHeartRateZone } from "./heartRateZones";
+import {
+  normalizeHeartRateZoneIndex,
+  resolveSampleHeartRateZone,
+} from "./heartRateZones";
 
 const zones: HeartRateZone[] = [
   { index: 1, label: "Easy", color: "#1", minBpm: null, maxBpm: 130, durationSeconds: null },
@@ -11,6 +14,20 @@ const zones: HeartRateZone[] = [
 describe("resolveSampleHeartRateZone", () => {
   it("uses the persisted zone index when it is valid", () => {
     expect(resolveSampleHeartRateZone({ heartRateBpm: 150, heartRateZone: 1 }, zones)?.index).toBe(1);
+  });
+
+  it("normalizes integer-like zone indices from runtime JSON", () => {
+    const runtimeZones = zones.map((zone) => ({
+      ...zone,
+      index: String(zone.index),
+    })) as unknown as HeartRateZone[];
+    const runtimeSample = {
+      heartRateBpm: null,
+      heartRateZone: "2",
+    } as unknown as Parameters<typeof resolveSampleHeartRateZone>[0];
+
+    expect(normalizeHeartRateZoneIndex("2")).toBe(2);
+    expect(resolveSampleHeartRateZone(runtimeSample, runtimeZones)?.index).toBe("2");
   });
 
   it("recovers a missing or unmatched index from dynamic BPM boundaries", () => {

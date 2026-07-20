@@ -55,8 +55,7 @@ podman-compose down
 podman-compose up -d --build
 ```
 
-Verify that the database, API, worker, and migration image all use the updated revision without
-printing credentials:
+Verify that the database, API, worker, and migration image all use the updated revision without printing credentials:
 
 ```sh
 podman-compose exec postgis sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT version_num FROM alembic_version"'

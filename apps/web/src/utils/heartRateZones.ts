@@ -1,7 +1,20 @@
 import type { ActivitySample, HeartRateZone } from "@vatove/contracts";
 
-function finiteBoundary(value: number | null): number | null {
-  return value !== null && Number.isFinite(value) ? value : null;
+function finiteNumber(value: unknown): number | null {
+  if (typeof value === "boolean" || value === null || value === undefined || value === "") {
+    return null;
+  }
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function finiteBoundary(value: unknown): number | null {
+  return finiteNumber(value);
+}
+
+export function normalizeHeartRateZoneIndex(value: unknown): number | null {
+  const numeric = finiteNumber(value);
+  return numeric !== null && Number.isInteger(numeric) && numeric > 0 ? numeric : null;
 }
 
 function containsHeartRate(zone: HeartRateZone, heartRateBpm: number): boolean {
@@ -22,14 +35,15 @@ export function resolveSampleHeartRateZone(
   sample: Pick<ActivitySample, "heartRateBpm" | "heartRateZone">,
   zones: readonly HeartRateZone[],
 ): HeartRateZone | null {
+  const persistedIndex = normalizeHeartRateZoneIndex(sample.heartRateZone);
   const indexed =
-    sample.heartRateZone === null
+    persistedIndex === null
       ? undefined
-      : zones.find((zone) => zone.index === sample.heartRateZone);
+      : zones.find((zone) => normalizeHeartRateZoneIndex(zone.index) === persistedIndex);
   if (indexed) return indexed;
 
-  const heartRateBpm = sample.heartRateBpm;
-  if (heartRateBpm === null || !Number.isFinite(heartRateBpm) || zones.length === 0) {
+  const heartRateBpm = finiteNumber(sample.heartRateBpm);
+  if (heartRateBpm === null || zones.length === 0) {
     return null;
   }
 
@@ -38,7 +52,11 @@ export function resolveSampleHeartRateZone(
 
   // Intervals clamps values outside its outer configured thresholds into the
   // first/last zone. Mirror that behavior for legacy rows without zone indices.
-  const ordered = [...zones].sort((left, right) => left.index - right.index);
+  const ordered = [...zones].sort(
+    (left, right) =>
+      (normalizeHeartRateZoneIndex(left.index) ?? Number.MAX_SAFE_INTEGER) -
+      (normalizeHeartRateZoneIndex(right.index) ?? Number.MAX_SAFE_INTEGER),
+  );
   const first = ordered[0];
   const last = ordered.at(-1);
   const firstMinimum = first ? finiteBoundary(first.minBpm) : null;

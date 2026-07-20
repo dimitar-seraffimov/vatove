@@ -1,11 +1,15 @@
 import type { ActivityDetail, ActivitySample, HeartRateZone } from "@vatove/contracts";
+import { Color } from "@maplibre/maplibre-gl-style-spec";
 import type { Feature, FeatureCollection, MultiLineString, Position } from "geojson";
-import { resolveSampleHeartRateZone } from "../utils/heartRateZones";
+import {
+  normalizeHeartRateZoneIndex,
+  resolveSampleHeartRateZone,
+} from "../utils/heartRateZones";
 
 export const NEUTRAL_ROUTE_COLOR = "#9ba8a3";
 
 const NEUTRAL_ZONE_INDEX = 0;
-const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+const UNPREFIXED_HEX_COLOR = /^(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 
 export interface HeartRateSegmentProperties {
   activityId: string;
@@ -69,15 +73,23 @@ function positionForSample(sample: ActivitySample): Position | null {
   return [sample.longitude, sample.latitude];
 }
 
+function normalizeZoneColor(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const candidate = UNPREFIXED_HEX_COLOR.test(trimmed) ? `#${trimmed}` : trimmed;
+  if (!Color.parse(candidate)) return null;
+  return candidate.startsWith("#") ? candidate.toLowerCase() : candidate;
+}
+
 function styleForZone(zone: HeartRateZone | null): SegmentStyle {
-  if (!zone || !Number.isInteger(zone.index) || zone.index <= NEUTRAL_ZONE_INDEX) {
-    return NEUTRAL_STYLE;
-  }
+  if (!zone) return NEUTRAL_STYLE;
+  const zoneIndex = normalizeHeartRateZoneIndex(zone.index);
+  const color = normalizeZoneColor(zone.color);
+  if (zoneIndex === null || color === null) return NEUTRAL_STYLE;
 
-  const color = typeof zone.color === "string" ? zone.color.trim() : "";
-  if (!HEX_COLOR.test(color)) return NEUTRAL_STYLE;
-
-  return { zoneIndex: zone.index, color: color.toLowerCase() };
+  return { zoneIndex, color };
 }
 
 function styleForEdge(

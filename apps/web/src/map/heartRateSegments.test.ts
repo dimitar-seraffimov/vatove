@@ -82,6 +82,43 @@ describe("buildHeartRateRoutePresentation", () => {
     });
   });
 
+  it("accepts integer-like zone indices from runtime JSON", () => {
+    const runtimeZones = [
+      { ...zone(1, "#0f0", null, 150), index: "1" },
+    ] as unknown as HeartRateZone[];
+    const runtimeSamples = [sample(0, 1, null), sample(1, 1, null)].map((item) => ({
+      ...item,
+      heartRateZone: "1",
+    })) as unknown as ActivitySample[];
+    const presentation = buildHeartRateRoutePresentation({
+      id: "string-indices",
+      samples: runtimeSamples,
+      heartRateZones: runtimeZones,
+    });
+
+    expect(presentation.stats.coloredEdges).toBe(1);
+    expect(presentation.data.features[0]?.properties).toMatchObject({
+      color: "#0f0",
+      zoneIndex: 1,
+    });
+  });
+
+  it.each([
+    ["#F00", "#f00"],
+    ["#FF0000FF", "#ff0000ff"],
+    ["FF0000", "#ff0000"],
+    ["rgb(255, 0, 0)", "rgb(255, 0, 0)"],
+  ])("accepts MapLibre-compatible zone colour %s", (input, expected) => {
+    const presentation = buildHeartRateRoutePresentation({
+      id: "colour-formats",
+      samples: [sample(0, 1), sample(1, 1)],
+      heartRateZones: [zone(1, input, null, null)],
+    });
+
+    expect(presentation.stats.coloredEdges).toBe(1);
+    expect(presentation.data.features[0]?.properties.color).toBe(expected);
+  });
+
   it("uses dynamic BPM boundaries for missing indices and never hardcoded zones", () => {
     const customZones = [
       zone(1, "#111111", null, 199),
@@ -132,7 +169,7 @@ describe("buildHeartRateRoutePresentation", () => {
   it("turns invalid zone indices and colours into neutral segments", () => {
     const invalidZones = [
       zone(0, "#123456", null, 139),
-      zone(2, "orange", 140, null),
+      zone(2, "not-a-colour", 140, null),
     ];
     const invalidIndex = buildHeartRateRoutePresentation({
       id: "invalid-index",

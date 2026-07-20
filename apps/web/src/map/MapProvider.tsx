@@ -54,7 +54,6 @@ export function MapProvider({ children }: PropsWithChildren) {
         style: import.meta.env.VITE_MAP_STYLE_URL || DEFAULT_STYLE_URL,
         ...INITIAL_MAP_VIEW,
         attributionControl: false,
-        cooperativeGestures: true,
       });
       instance.addControl(
         new maplibregl.AttributionControl({ compact: true }),
