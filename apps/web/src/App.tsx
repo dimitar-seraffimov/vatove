@@ -8,7 +8,9 @@ import { BrandLink } from "./components/BrandLink";
 import { ElevationChart } from "./components/ElevationChart";
 import { HeartRateChart } from "./components/HeartRateChart";
 import { HomePanel } from "./components/HomePanel";
+import { PaceChart } from "./components/PaceChart";
 import { PlaceholderPage } from "./components/PlaceholderPage";
+import { SpeedChart } from "./components/SpeedChart";
 import { useTooltip } from "./context/TooltipContext";
 import { useActivityFeed } from "./hooks/useActivityFeed";
 import { useActivityRoutes } from "./hooks/useActivityRoutes";
@@ -63,6 +65,37 @@ export default function App() {
   const [syncRun, setSyncRun] = useState<SyncRun | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const fitTimerRef = useRef<number | null>(null);
+  const detailCacheRef = useRef(new Map<string, ActivityDetail>());
+  const detailRequestsRef = useRef(new Map<string, Promise<ActivityDetail>>());
+
+  const loadActivityDetail = useCallback((id: string): Promise<ActivityDetail> => {
+    const cached = detailCacheRef.current.get(id);
+    if (cached) return Promise.resolve(cached);
+
+    const pending = detailRequestsRef.current.get(id);
+    if (pending) return pending;
+
+    const request = getActivity(id).then(
+      (activity) => {
+        detailCacheRef.current.set(id, activity);
+        detailRequestsRef.current.delete(id);
+        return activity;
+      },
+      (error: unknown) => {
+        detailRequestsRef.current.delete(id);
+        throw error;
+      },
+    );
+    detailRequestsRef.current.set(id, request);
+    return request;
+  }, []);
+
+  const prefetchActivity = useCallback(
+    (id: string) => {
+      void loadActivityDetail(id).catch(() => undefined);
+    },
+    [loadActivityDetail],
+  );
 
   useEffect(() => {
     document.title = pageTitle(location.pathname);
@@ -94,20 +127,25 @@ export default function App() {
       setDetailLoading(false);
       return;
     }
-    const controller = new AbortController();
-    setDetail(null);
-    setDetailLoading(true);
+    let active = true;
+    const cached = detailCacheRef.current.get(selectedId) ?? null;
+    setDetail(cached);
+    setDetailLoading(cached === null);
     setDetailError(null);
-    void getActivity(selectedId, controller.signal)
-      .then(setDetail)
+    void loadActivityDetail(selectedId)
+      .then((activity) => {
+        if (active) setDetail(activity);
+      })
       .catch((error: unknown) => {
-        if (!controller.signal.aborted) setDetailError(messageFrom(error));
+        if (active) setDetailError(messageFrom(error));
       })
       .finally(() => {
-        if (!controller.signal.aborted) setDetailLoading(false);
+        if (active) setDetailLoading(false);
       });
-    return () => controller.abort();
-  }, [selectedId]);
+    return () => {
+      active = false;
+    };
+  }, [loadActivityDetail, selectedId]);
 
   const syncing = syncRun?.status === "queued" || syncRun?.status === "running";
   const syncRunId = syncRun?.id;
@@ -282,6 +320,7 @@ export default function App() {
                 loading={feed.loading}
                 error={feed.error}
                 onSelect={chooseActivity}
+                onPrefetch={prefetchActivity}
                 onRetry={() => void feed.refresh()}
               />
             </aside>
@@ -345,6 +384,8 @@ export default function App() {
               onToggleExpanded={toggleDetailsExpanded}
             />
           )}
+          {visibleDetail && <PaceChart samples={visibleDetail.samples} />}
+          {visibleDetail && <SpeedChart samples={visibleDetail.samples} />}
           {visibleDetail && hasElevationProfile && <ElevationChart samples={visibleDetail.samples} />}
           {visibleDetail && hasHeartRateProfile && (
             <HeartRateChart
@@ -355,6 +396,12 @@ export default function App() {
           {visibleDetail && !visibleDetail.hasHeartRate && (
             <p className="data-note">
               No heart-rate stream was recorded; the selected route uses a neutral colour.
+            </p>
+          )}
+          {visibleDetail?.hasHeartRate && visibleDetail.heartRateZones.length === 0 && (
+            <p className="data-note">
+              No dynamic heart-rate zones were available for this sport; the selected route uses
+              a neutral colour.
             </p>
           )}
         </aside>

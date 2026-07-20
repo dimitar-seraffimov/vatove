@@ -13,7 +13,7 @@ export default defineConfig({
       manifest: {
         name: "vatove Activity Explorer",
         short_name: "vatove",
-        description: "Explore Intervals.icu routes, heart-rate zones, and elevation.",
+        description: "Explore Intervals.icu routes, pace, speed, heart-rate zones, and elevation.",
         theme_color: "#071712",
         background_color: "#071712",
         display: "standalone",

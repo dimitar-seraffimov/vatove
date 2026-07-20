@@ -204,6 +204,48 @@ describe("application navigation and analysis state", () => {
     expect(screen.getByRole("button", { name: "Expand" })).toBeTruthy();
   });
 
+  it("shares prefetched detail requests and reuses completed selections", async () => {
+    renderApp("/analyse");
+    const firstActivity = await screen.findByRole("button", { name: /Morning Ride/ });
+
+    fireEvent.pointerEnter(firstActivity);
+    fireEvent.click(firstActivity);
+    expect(await screen.findByRole("heading", { name: "Morning Ride" })).toBeTruthy();
+    expect(vi.mocked(getActivity).mock.calls.filter(([id]) => id === "activity-1")).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /Evening Run/ }));
+    expect(await screen.findByRole("heading", { name: "Evening Run" })).toBeTruthy();
+    fireEvent.click(firstActivity);
+    expect(await screen.findByRole("heading", { name: "Morning Ride" })).toBeTruthy();
+    expect(vi.mocked(getActivity).mock.calls.filter(([id]) => id === "activity-1")).toHaveLength(1);
+  });
+
+  it("renders pace immediately above speed when motion samples are available", async () => {
+    vi.mocked(getActivity).mockImplementation(async (id) => {
+      const summary = summaries.find((item) => item.id === id)!;
+      return {
+        ...detailFor(summary),
+        samples: [0, 1, 2].map((index) => ({
+          index,
+          sourceIndex: index,
+          longitude: -0.2 + index / 100,
+          latitude: 51.5 + index / 100,
+          elapsedSeconds: index * 30,
+          distanceMeters: index * 100,
+          elevationMeters: null,
+          heartRateBpm: null,
+          heartRateZone: null,
+        })),
+      };
+    });
+    renderApp("/analyse");
+    fireEvent.click(await screen.findByRole("button", { name: /Morning Ride/ }));
+
+    const pace = await screen.findByRole("heading", { name: "Pace" });
+    const speed = screen.getByRole("heading", { name: "Speed" });
+    expect(pace.compareDocumentPosition(speed) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("dismisses the completed sync notice after three seconds", async () => {
     vi.useFakeTimers();
     renderApp("/analyse");

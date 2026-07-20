@@ -9,6 +9,7 @@ export interface ActivityListProps {
   loading: boolean;
   error: string | null;
   onSelect: (id: string) => void;
+  onPrefetch?: (id: string) => void;
   onRetry: () => void;
 }
 
@@ -38,6 +39,7 @@ export function ActivityList({
   loading,
   error,
   onSelect,
+  onPrefetch,
   onRetry,
 }: ActivityListProps) {
   const rowRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -92,6 +94,8 @@ export function ActivityList({
             className={`activity-row${selectedId === activity.id ? " is-selected" : ""}`}
             aria-current={selectedId === activity.id ? "true" : undefined}
             onClick={() => onSelect(activity.id)}
+            onFocus={() => onPrefetch?.(activity.id)}
+            onPointerEnter={() => onPrefetch?.(activity.id)}
           >
             <SportMark sport={activity.sport} />
             <span className="activity-copy">

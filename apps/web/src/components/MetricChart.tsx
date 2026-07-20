@@ -23,6 +23,7 @@ interface MetricChartProps {
   title: string;
   description: string;
   yPadding: number;
+  reverseY?: boolean;
   formatValue: (value: number) => string;
   className: string;
   svgClassName: string;
@@ -43,6 +44,7 @@ export function MetricChart({
   title,
   description,
   yPadding,
+  reverseY = false,
   formatValue,
   className,
   svgClassName,
@@ -67,7 +69,7 @@ export function MetricChart({
     const yScale = scaleLinear()
       .domain(paddedDomain(points.map((point) => point.value), yPadding))
       .nice()
-      .range([innerHeight, 0]);
+      .range(reverseY ? [0, innerHeight] : [innerHeight, 0]);
     const svg = select(svgNode);
     svg.selectAll("*").remove();
     svg.attr("viewBox", `0 0 ${width} ${height}`);
@@ -163,6 +165,7 @@ export function MetricChart({
     lineClassName,
     lineShadowClassName,
     points,
+    reverseY,
     setActiveSampleIndex,
     usesDistance,
     yPadding,

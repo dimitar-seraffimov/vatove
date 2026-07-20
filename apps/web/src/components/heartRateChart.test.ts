@@ -48,10 +48,28 @@ describe("buildHeartRateChartData", () => {
     ]);
   });
 
-  it("uses a neutral color for missing, unknown, or empty zones", () => {
+  it("recovers missing and unknown indices from dynamic zone boundaries", () => {
+    const boundedZones: HeartRateZone[] = [
+      { ...zone(1, "#117733"), maxBpm: 130 },
+      { ...zone(2, "#ddaa33"), minBpm: 131, maxBpm: 150 },
+      { ...zone(3, "#cc3311"), minBpm: 151, maxBpm: 180 },
+    ];
     const data = buildHeartRateChartData(
       [sample(0, 120, null), sample(1, 145, 20), sample(2, 160, 3)],
-      [zone(3, "  ")],
+      boundedZones,
+    );
+
+    expect(data.points.map((point) => point.color)).toEqual([
+      "#117733",
+      "#ddaa33",
+      "#cc3311",
+    ]);
+  });
+
+  it("uses a neutral color when dynamic zones are unavailable", () => {
+    const data = buildHeartRateChartData(
+      [sample(0, 120, null), sample(1, 145, 20), sample(2, 160, 3)],
+      [],
     );
 
     expect(data.points.map((point) => point.color)).toEqual([

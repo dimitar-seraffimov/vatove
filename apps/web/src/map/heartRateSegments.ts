@@ -1,5 +1,6 @@
 import type { ActivityDetail, HeartRateZone } from "@vatove/contracts";
 import type { Feature, FeatureCollection, LineString, Position } from "geojson";
+import { resolveSampleHeartRateZone } from "../utils/heartRateZones";
 import { NEUTRAL_ROUTE_COLOR } from "./heartRateGradient";
 
 export interface HeartRateSegmentProperties {
@@ -20,14 +21,10 @@ function validCoordinate(longitude: number, latitude: number): Position | null {
 }
 
 function zoneStyle(
-  zoneIndex: number | null,
-  zonesByIndex: ReadonlyMap<number, HeartRateZone>,
+  sample: ActivityDetail["samples"][number],
+  zones: readonly HeartRateZone[],
 ): Pick<HeartRateSegmentProperties, "color" | "zoneIndex"> {
-  if (zoneIndex === null) {
-    return { color: NEUTRAL_ROUTE_COLOR, zoneIndex: null };
-  }
-
-  const zone = zonesByIndex.get(zoneIndex);
+  const zone = resolveSampleHeartRateZone(sample, zones);
   const color = zone?.color.trim();
   if (!zone || !color) {
     return { color: NEUTRAL_ROUTE_COLOR, zoneIndex: null };
@@ -70,9 +67,6 @@ export function buildHeartRateRouteSegments(
   activity: Pick<ActivityDetail, "id" | "samples" | "heartRateZones">,
 ): HeartRateSegmentCollection {
   const features: HeartRateSegmentFeature[] = [];
-  const zonesByIndex = new Map(
-    activity.heartRateZones.map((zone) => [zone.index, zone]),
-  );
   let canMergePrevious = false;
 
   for (let index = 0; index < activity.samples.length - 1; index += 1) {
@@ -87,7 +81,11 @@ export function buildHeartRateRouteSegments(
       continue;
     }
 
-    const style = zoneStyle(sample.heartRateZone, zonesByIndex);
+    const startStyle = zoneStyle(sample, activity.heartRateZones);
+    const style =
+      startStyle.zoneIndex === null
+        ? zoneStyle(nextSample, activity.heartRateZones)
+        : startStyle;
     const previous = canMergePrevious ? features.at(-1) : undefined;
     if (
       previous?.properties.color === style.color &&

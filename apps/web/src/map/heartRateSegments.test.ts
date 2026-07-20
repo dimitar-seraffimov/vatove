@@ -95,25 +95,34 @@ describe("buildHeartRateRouteSegments", () => {
     });
   });
 
-  it("uses one neutral segment for adjacent missing and unmatched zones", () => {
+  it("recovers an unmatched persisted zone from BPM and dynamic boundaries", () => {
     const collection = buildHeartRateRouteSegments(
       activity([sample(0, null), sample(1, 99), sample(2, 1)]),
     );
 
+    expect(collection.features.map((feature) => feature.properties)).toEqual([
+      { activityId: "activity-123", color: "#f5a623", zoneIndex: 2 },
+    ]);
+  });
+
+  it("borrows the next valid sample zone for an edge with missing starting HR", () => {
+    const collection = buildHeartRateRouteSegments(
+      activity([sample(0, null), sample(1, 1), sample(2, 1)]),
+    );
+
     expect(collection.features).toHaveLength(1);
-    expect(collection.features[0]).toMatchObject({
-      properties: {
-        activityId: "activity-123",
-        color: NEUTRAL_ROUTE_COLOR,
-        zoneIndex: null,
-      },
-      geometry: {
-        coordinates: [
-          [-1, 52],
-          [-0.99, 52.01],
-          [-0.98, 52.02],
-        ],
-      },
+    expect(collection.features[0]?.properties.color).toBe("#35a66f");
+  });
+
+  it("retains the neutral fallback when neither endpoint has usable HR", () => {
+    const collection = buildHeartRateRouteSegments(
+      activity([sample(0, null), sample(1, null), sample(2, null)]),
+    );
+
+    expect(collection.features).toHaveLength(1);
+    expect(collection.features[0]?.properties).toMatchObject({
+      color: NEUTRAL_ROUTE_COLOR,
+      zoneIndex: null,
     });
   });
 
