@@ -209,9 +209,20 @@ export function buildHeartRateRoutePresentation(
       },
     }));
 
-  return {
+  const presentation: HeartRateRoutePresentation = {
     data: { type: "FeatureCollection", features },
     stats,
     hasZoneColors: stats.coloredEdges > 0,
   };
+
+  // --- ADDED LOG ---
+  console.log(JSON.stringify({
+    diagnostic: "HEART_RATE_SEGMENTS_PAYLOAD",
+    featureCount: presentation.data.features.length,
+    sampleFeature: presentation.data.features[0],
+    properties: presentation.data.features[0]?.properties
+  }, null, 2));
+  // -----------------
+
+  return presentation;
 }

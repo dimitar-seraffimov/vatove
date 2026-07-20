@@ -110,32 +110,37 @@ export function ensureActivityMapLayers(
   }
 
   const activeSource = map.getSource(ACTIVE_SOURCE_ID) as GeoJSONSource | undefined;
-  if (activeSource) activeSource.setData(activeRoute.data);
-  else {
-    map.addSource(ACTIVE_SOURCE_ID, {
-      type: "geojson",
-      data: activeRoute.data,
-    });
-  }
+    if (activeSource) activeSource.setData(activeRoute.data);
+    else {
+      map.addSource(ACTIVE_SOURCE_ID, {
+        type: "geojson",
+        data: activeRoute.data,
+      });
+    }
 
-  if (!map.getLayer(ACTIVE_LAYER_ID)) {
-    map.addLayer({
-      id: ACTIVE_LAYER_ID,
-      type: "line",
-      source: ACTIVE_SOURCE_ID,
-      filter: activityFilter(selectedId),
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: {
-        "line-width": ["interpolate", ["linear"], ["zoom"], 3, 4, 12, 8, 18, 13],
-        "line-opacity": 0.98,
-        "line-color": ["coalesce", ["get", "color"], NEUTRAL_ROUTE_COLOR],
-      },
-    });
-  } else {
-    map.setFilter(ACTIVE_LAYER_ID, activityFilter(selectedId));
-  }
+  const activeLayerPaint = {
+      "line-width": ["interpolate", ["linear"], ["zoom"], 3, 4, 12, 8, 18, 13],
+      "line-opacity": 0.98,
+      "line-color": ["coalesce", ["get", "color"], NEUTRAL_ROUTE_COLOR],
+    } as const;
 
-  // Style reloads recreate the base-style layers. Keep the selected activity
-  // above every overview and hit-target layer without changing its paint.
-  map.moveLayer(ACTIVE_LAYER_ID);
+    // --- ADDED LOG ---
+    console.log(JSON.stringify({
+      diagnostic: "MAPLIBRE_PAINT_EXPRESSION",
+      paint: activeLayerPaint
+    }, null, 2));
+    // -----------------
+
+    if (!map.getLayer(ACTIVE_LAYER_ID)) {
+      map.addLayer({
+        id: ACTIVE_LAYER_ID,
+        type: "line",
+        source: ACTIVE_SOURCE_ID,
+        filter: activityFilter(selectedId),
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: activeLayerPaint as any,
+      });
+    } else {
+      map.setFilter(ACTIVE_LAYER_ID, activityFilter(selectedId));
+    }
 }
