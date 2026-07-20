@@ -237,11 +237,20 @@ export function ActivityMap({
   ]);
 
   useEffect(() => {
-    if (!map || styleRevision === 0 || !selectedId || !selectedOverviewRoute) return;
-    const bounds = routeBounds([selectedOverviewRoute]);
+    if (!map || styleRevision === 0) return;
+
+    const featuresToFit = selectedOverviewRoute 
+      ? [selectedOverviewRoute] 
+      : routeData.features;
+      
+    if (featuresToFit.length === 0) return;
+
+    const bounds = routeBounds(featuresToFit);
     if (!bounds) return;
+
     let animationFrame: number | null = null;
     let transitionTimer: number | null = null;
+
     const fitSelectedRoute = () => {
       map.fitBounds(bounds, {
         padding: fitPadding(map.getContainer()),
@@ -249,9 +258,11 @@ export function ActivityMap({
         duration: prefersReducedMotion() ? 0 : 500,
       });
     };
+
     const fitAfterLayout = () => {
       animationFrame = window.requestAnimationFrame(fitSelectedRoute);
     };
+
     if (!window.matchMedia("(max-width: 999px)").matches) {
       fitAfterLayout();
     } else {
@@ -260,11 +271,12 @@ export function ActivityMap({
         prefersReducedMotion() ? 0 : 260,
       );
     }
+
     return () => {
       if (transitionTimer !== null) window.clearTimeout(transitionTimer);
       if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
     };
-  }, [map, selectedId, selectedOverviewRoute, selectionRevision, styleRevision]);
+  }, [map, selectedOverviewRoute, routeData.features, selectionRevision, styleRevision]);
 
   useEffect(() => {
     if (!map || styleRevision === 0) return;

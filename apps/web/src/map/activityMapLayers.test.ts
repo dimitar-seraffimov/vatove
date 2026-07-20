@@ -105,6 +105,9 @@ function detail(id: string): ActivityDetail {
 function fakeMap(styleLoaded = true) {
   const sources = new Map<string, { setData: ReturnType<typeof vi.fn> }>();
   const layers = new Map<string, unknown>();
+  const container = document.createElement("div");
+  const canvas = document.createElement("canvas");
+
   const map = {
     isStyleLoaded: vi.fn(() => styleLoaded),
     getSource: vi.fn((id: string) => sources.get(id)),
@@ -122,6 +125,17 @@ function fakeMap(styleLoaded = true) {
     querySourceFeatures: vi.fn(
       (): Array<{ properties?: Record<string, unknown> }> => [],
     ),
+    fitBounds: vi.fn(),
+    getContainer: vi.fn(() => container),
+    getCanvas: vi.fn(() => canvas),
+    zoomIn: vi.fn(),
+    zoomOut: vi.fn(),
+    on: vi.fn(),
+    off: vi.fn(),
+    queryRenderedFeatures: vi.fn(() => []),
+    setProjection: vi.fn(),
+    triggerRepaint: vi.fn(),
+    resize: vi.fn(),
   };
   return { map: map as unknown as MapLibreMap, raw: map, sources, layers };
 }

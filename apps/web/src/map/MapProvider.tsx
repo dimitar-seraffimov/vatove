@@ -23,6 +23,7 @@ interface MapContextValue {
 }
 
 const MapContext = createContext<MapContextValue | null>(null);
+
 export function MapProvider({ children }: PropsWithChildren) {
   const [container, setContainer] = useState<HTMLDivElement | null>(null);
   const [map, setMap] = useState<MapLibreMap | null>(null);
@@ -31,6 +32,7 @@ export function MapProvider({ children }: PropsWithChildren) {
   const [initializationError, setInitializationError] = useState<string | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const resizeFrameRef = useRef<number | null>(null);
+  const previousSize = useRef({ width: 0, height: 0 });
 
   const containerRef = useCallback<RefCallback<HTMLDivElement>>((node) => {
     setContainer(node);
@@ -39,7 +41,19 @@ export function MapProvider({ children }: PropsWithChildren) {
   const requestResize = useCallback(() => {
     if (resizeFrameRef.current !== null) cancelAnimationFrame(resizeFrameRef.current);
     resizeFrameRef.current = requestAnimationFrame(() => {
-      mapRef.current?.resize();
+      const currentMap = mapRef.current;
+      const currentContainer = currentMap?.getContainer();
+      
+      if (currentMap && currentContainer) {
+        const { clientWidth, clientHeight } = currentContainer;
+        if (
+          clientWidth !== previousSize.current.width ||
+          clientHeight !== previousSize.current.height
+        ) {
+          previousSize.current = { width: clientWidth, height: clientHeight };
+          currentMap.resize();
+        }
+      }
       resizeFrameRef.current = null;
     });
   }, []);
@@ -49,6 +63,7 @@ export function MapProvider({ children }: PropsWithChildren) {
 
     let instance: MapLibreMap | null = null;
     try {
+      previousSize.current = { width: container.clientWidth, height: container.clientHeight };
       instance = new maplibregl.Map({
         container,
         style: import.meta.env.VITE_MAP_STYLE_URL || DEFAULT_STYLE_URL,
@@ -72,10 +87,12 @@ export function MapProvider({ children }: PropsWithChildren) {
     setStyleRevision(0);
     setInitializationError(null);
     let styleHasLoaded = false;
+    
     const applyGlobeProjection = () => {
-      instance.setProjection(GLOBE_PROJECTION);
+      instance!.setProjection(GLOBE_PROJECTION);
       setStyleRevision((current) => current + 1);
     };
+    
     const handleStyleLoad = () => {
       styleHasLoaded = true;
       try {
@@ -87,10 +104,12 @@ export function MapProvider({ children }: PropsWithChildren) {
         );
       }
     };
+    
     const handleMapError = (event: MapLibreErrorEvent) => {
       if (styleHasLoaded) return;
       setInitializationError(`The map style could not be loaded. ${event.error.message}`);
     };
+    
     instance.on("style.load", handleStyleLoad);
     instance.on("error", handleMapError);
     if (instance.isStyleLoaded()) handleStyleLoad();
@@ -100,10 +119,11 @@ export function MapProvider({ children }: PropsWithChildren) {
       event.preventDefault();
       setContextLost(true);
     };
+    
     const handleContextRestored = () => {
       setContextLost(false);
-      instance.resize();
-      if (instance.isStyleLoaded()) {
+      instance!.resize();
+      if (instance!.isStyleLoaded()) {
         try {
           applyGlobeProjection();
           setInitializationError(null);
@@ -113,8 +133,9 @@ export function MapProvider({ children }: PropsWithChildren) {
           );
         }
       }
-      instance.triggerRepaint();
+      instance!.triggerRepaint();
     };
+    
     canvas.addEventListener("webglcontextlost", handleContextLost);
     canvas.addEventListener("webglcontextrestored", handleContextRestored);
 
@@ -129,10 +150,10 @@ export function MapProvider({ children }: PropsWithChildren) {
       window.removeEventListener("orientationchange", requestResize);
       canvas.removeEventListener("webglcontextlost", handleContextLost);
       canvas.removeEventListener("webglcontextrestored", handleContextRestored);
-      instance.off("style.load", handleStyleLoad);
-      instance.off("error", handleMapError);
+      instance!.off("style.load", handleStyleLoad);
+      instance!.off("error", handleMapError);
       if (resizeFrameRef.current !== null) cancelAnimationFrame(resizeFrameRef.current);
-      instance.remove();
+      instance!.remove();
       mapRef.current = null;
       setMap(null);
       setStyleRevision(0);
@@ -143,11 +164,10 @@ export function MapProvider({ children }: PropsWithChildren) {
     () => ({ map, styleRevision, containerRef, contextLost, initializationError, requestResize }),
     [map, styleRevision, containerRef, contextLost, initializationError, requestResize],
   );
+  
   return <MapContext.Provider value={value}>{children}</MapContext.Provider>;
 }
 
-// This module intentionally exports the provider and its paired hook.
-// eslint-disable-next-line react-refresh/only-export-components
 export function useMap(): MapContextValue {
   const context = useContext(MapContext);
   if (!context) throw new Error("useMap must be used inside MapProvider");

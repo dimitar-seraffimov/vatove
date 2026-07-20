@@ -168,12 +168,12 @@ describe("buildHeartRateRoutePresentation", () => {
 
   it("turns invalid zone indices and colours into neutral segments", () => {
     const invalidZones = [
-      zone(0, "#123456", null, 139),
+      zone(-1, "#123456", null, 139),
       zone(2, "not-a-colour", 140, null),
     ];
     const invalidIndex = buildHeartRateRoutePresentation({
       id: "invalid-index",
-      samples: [sample(0, 0, 100), sample(1, 0, 100)],
+      samples: [sample(0, -1, 100), sample(1, -1, 100)],
       heartRateZones: invalidZones,
     });
     const invalidColor = buildHeartRateRoutePresentation({
