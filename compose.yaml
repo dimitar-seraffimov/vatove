@@ -1,0 +1,135 @@
+name: vatove
+
+services:
+  postgis:
+    image: postgis/postgis:18-3.6
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vatove}
+      POSTGRES_USER: ${POSTGRES_USER:-vatove}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vatove-local-only}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgis-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  kafka:
+    image: apache/kafka:4.3.1
+    hostname: kafka
+    environment:
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093,EXTERNAL://:29092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    ports:
+      - "127.0.0.1:29092:29092"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  kafka-init:
+    image: apache/kafka:4.3.1
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-ec"]
+    command:
+      - |
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic incoming_activities.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic incoming_activities.dlq.v1 --partitions 1 --replication-factor 1
+    restart: "no"
+
+  migrate:
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    command: ["alembic", "-c", "services/worker/alembic.ini", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-vatove}:${POSTGRES_PASSWORD:-vatove-local-only}@postgis:5432/${POSTGRES_DB:-vatove}
+    depends_on:
+      postgis:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      APP_TIMEZONE: ${APP_TIMEZONE:-Europe/London}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-vatove}:${POSTGRES_PASSWORD:-vatove-local-only}@postgis:5432/${POSTGRES_DB:-vatove}
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_INGESTION_TOPIC: incoming_activities.v1
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      kafka-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/v1/health/live').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-vatove}:${POSTGRES_PASSWORD:-vatove-local-only}@postgis:5432/${POSTGRES_DB:-vatove}
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_INGESTION_TOPIC: incoming_activities.v1
+      KAFKA_DLQ_TOPIC: incoming_activities.dlq.v1
+      KAFKA_CONSUMER_GROUP: vatove-intervals-worker-v1
+      INTERVALS_API_BASE_URL: ${INTERVALS_API_BASE_URL:-https://intervals.icu}
+      INTERVALS_API_KEY: ${INTERVALS_API_KEY:-}
+      INTERVALS_USER_AGENT: ${INTERVALS_USER_AGENT:-Mozilla/5.0 (compatible; Vatove/0.1; +http://localhost)}
+      INTERVALS_REQUESTS_PER_SECOND: ${INTERVALS_REQUESTS_PER_SECOND:-8}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      kafka-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  nginx:
+    build:
+      context: .
+      dockerfile: infra/nginx/Dockerfile
+      args:
+        VITE_MAP_STYLE_URL: ${VITE_MAP_STYLE_URL:-https://tiles.openfreemap.org/styles/liberty}
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgis-data:
+  kafka-data:

@@ -1,0 +1,14 @@
+{
+  "id": "i9001",
+  "name": "Fixture morning ride",
+  "type": "Ride",
+  "start_date": "2026-07-18T06:30:00Z",
+  "start_date_local": "2026-07-18T07:30:00",
+  "moving_time": 3600,
+  "distance": 24500.5,
+  "has_heartrate": true,
+  "icu_hr_zones": [120, 140, 160, 180],
+  "updated": "2026-07-18T09:45:12Z",
+  "stream_types": ["time", "distance", "heartrate", "altitude"]
+}
+

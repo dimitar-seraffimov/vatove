@@ -1,0 +1,12 @@
+[
+  {
+    "id": "i9001",
+    "name": "Fixture morning ride",
+    "type": "Ride",
+    "start_date": "2026-07-18T06:30:00Z",
+    "moving_time": 3600,
+    "distance": 24500.5,
+    "icu_hr_zones": [120, 140, 160, 180]
+  }
+]
+
