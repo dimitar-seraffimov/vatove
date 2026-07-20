@@ -1,15 +1,11 @@
 import type { ActivityDetail, ActivitySample, HeartRateZone } from "@vatove/contracts";
 import { Color } from "@maplibre/maplibre-gl-style-spec";
 import type { Feature, FeatureCollection, MultiLineString, Position } from "geojson";
-import {
-  normalizeHeartRateZoneIndex,
-  resolveSampleHeartRateZone,
-} from "../utils/heartRateZones";
+import { resolveSampleHeartRateZone } from "../utils/heartRateZones";
 
 export const NEUTRAL_ROUTE_COLOR = "#9ba8a3";
 
 const NEUTRAL_ZONE_INDEX = 0;
-const UNPREFIXED_HEX_COLOR = /^(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 
 export interface HeartRateSegmentProperties {
   activityId: string;
@@ -67,10 +63,12 @@ function emptyStats(): HeartRateRouteStats {
 }
 
 function positionForSample(sample: ActivitySample): Position | null {
-  if (!Number.isFinite(sample.longitude) || !Number.isFinite(sample.latitude)) {
+  const lon = Number(sample.longitude);
+  const lat = Number(sample.latitude);
+  if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
     return null;
   }
-  return [sample.longitude, sample.latitude];
+  return [lon, lat];
 }
 
 function normalizeZoneColor(value: unknown): string | null {
@@ -78,29 +76,23 @@ function normalizeZoneColor(value: unknown): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
 
-  const candidate = UNPREFIXED_HEX_COLOR.test(trimmed) ? `#${trimmed}` : trimmed;
-  if (!Color.parse(candidate)) return null;
-  return candidate.startsWith("#") ? candidate.toLowerCase() : candidate;
+  const candidate = /^[0-9a-f]{3,8}$/i.test(trimmed) ? `#${trimmed}` : trimmed;
+  const parsed = Color.parse(candidate);
+  if (!parsed) return null;
+
+  return `rgba(${Math.round(parsed.r * 255)}, ${Math.round(parsed.g * 255)}, ${Math.round(parsed.b * 255)}, ${parsed.a})`;
 }
 
 function styleForZone(zone: HeartRateZone | null): SegmentStyle {
   if (!zone) return NEUTRAL_STYLE;
-  const zoneIndex = normalizeHeartRateZoneIndex(zone.index);
+  
+  const zoneIndex = parseInt(String(zone.index), 10);
+  if (Number.isNaN(zoneIndex) || zoneIndex <= NEUTRAL_ZONE_INDEX) return NEUTRAL_STYLE;
+
   const color = normalizeZoneColor(zone.color);
-  if (zoneIndex === null || color === null) return NEUTRAL_STYLE;
+  if (color === null) return NEUTRAL_STYLE;
 
   return { zoneIndex, color };
-}
-
-function styleForEdge(
-  start: ActivitySample,
-  end: ActivitySample,
-  zones: readonly HeartRateZone[],
-): SegmentStyle {
-  const zone =
-    resolveSampleHeartRateZone(start, zones) ??
-    resolveSampleHeartRateZone(end, zones);
-  return styleForZone(zone);
 }
 
 function groupSort(left: SegmentGroup, right: SegmentGroup): number {
@@ -109,15 +101,6 @@ function groupSort(left: SegmentGroup, right: SegmentGroup): number {
   return left.zoneIndex - right.zoneIndex;
 }
 
-/**
- * Builds a bounded, fixed-colour GeoJSON presentation for an activity route.
- *
- * Each adjacent valid GPS pair is assigned to its starting sample's persisted
- * heart-rate zone. The shared zone resolver recovers legacy samples from their
- * BPM and dynamic zone boundaries; the ending sample is consulted only when
- * the starting sample cannot be resolved. Consecutive edges in the same zone
- * become one run, then all runs for a zone are grouped into one MultiLineString.
- */
 export function buildHeartRateRoutePresentation(
   activity: Pick<ActivityDetail, "id" | "samples" | "heartRateZones"> | null,
 ): HeartRateRoutePresentation {
@@ -129,15 +112,19 @@ export function buildHeartRateRoutePresentation(
     };
   }
 
-  const stats: HeartRateRouteStats = {
-    ...emptyStats(),
-    totalEdges: activity.samples.length - 1,
-  };
+  const stats: HeartRateRouteStats = emptyStats();
+  
+  const precomputedStyles = new Map<number, SegmentStyle>();
+  for (const zone of activity.heartRateZones) {
+    const style = styleForZone(zone);
+    precomputedStyles.set(style.zoneIndex, style);
+  }
+
   const groups = new Map<number, SegmentGroup>();
   let activeRun: ActiveRun | null = null;
 
   const finishRun = (): void => {
-    if (!activeRun) return;
+    if (!activeRun || activeRun.coordinates.length < 2) return;
     const currentRun = activeRun;
     const group = groups.get(currentRun.zoneIndex);
     if (group) {
@@ -152,37 +139,57 @@ export function buildHeartRateRoutePresentation(
     activeRun = null;
   };
 
-  for (let index = 0; index < activity.samples.length - 1; index += 1) {
-    const start = activity.samples[index];
-    const end = activity.samples[index + 1];
-    if (!start || !end) continue;
+  let lastValidSample: ActivitySample | null = null;
+  let lastValidPosition: Position | null = null;
+  let lastKnownZoneIndex = NEUTRAL_ZONE_INDEX;
 
-    const startPosition = positionForSample(start);
-    const endPosition = positionForSample(end);
-    if (!startPosition || !endPosition) {
+  for (const sample of activity.samples) {
+    const pos = positionForSample(sample);
+    if (!pos) {
       stats.discardedEdges += 1;
-      finishRun();
       continue;
     }
 
-    const style = styleForEdge(start, end, activity.heartRateZones);
-    if (style.zoneIndex === NEUTRAL_ZONE_INDEX) {
-      stats.neutralEdges += 1;
-    } else {
-      stats.coloredEdges += 1;
+    const resolvedZone = resolveSampleHeartRateZone(sample, activity.heartRateZones);
+    const sampleZoneIndex = resolvedZone ? parseInt(String(resolvedZone.index), 10) : NEUTRAL_ZONE_INDEX;
+
+    if (lastValidSample && lastValidPosition) {
+      stats.totalEdges += 1;
+      
+      const resolvedPreviousZone = resolveSampleHeartRateZone(lastValidSample, activity.heartRateZones);
+      const previousZoneIndex = resolvedPreviousZone ? parseInt(String(resolvedPreviousZone.index), 10) : NEUTRAL_ZONE_INDEX;
+      
+      const edgeZoneIndex = 
+        !Number.isNaN(sampleZoneIndex) && sampleZoneIndex > NEUTRAL_ZONE_INDEX ? sampleZoneIndex :
+        !Number.isNaN(previousZoneIndex) && previousZoneIndex > NEUTRAL_ZONE_INDEX ? previousZoneIndex :
+        lastKnownZoneIndex;
+
+      const style = precomputedStyles.get(edgeZoneIndex) ?? NEUTRAL_STYLE;
+
+      if (style.zoneIndex === NEUTRAL_ZONE_INDEX) {
+        stats.neutralEdges += 1;
+      } else {
+        stats.coloredEdges += 1;
+      }
+
+      if (activeRun?.zoneIndex === style.zoneIndex) {
+        activeRun.coordinates.push(pos);
+      } else {
+        finishRun();
+        activeRun = {
+          ...style,
+          coordinates: [lastValidPosition, pos],
+        };
+      }
     }
 
-    if (activeRun?.zoneIndex === style.zoneIndex) {
-      activeRun.coordinates.push(endPosition);
-      continue;
+    lastValidSample = sample;
+    lastValidPosition = pos;
+    if (!Number.isNaN(sampleZoneIndex) && sampleZoneIndex > NEUTRAL_ZONE_INDEX) {
+      lastKnownZoneIndex = sampleZoneIndex;
     }
-
-    finishRun();
-    activeRun = {
-      ...style,
-      coordinates: [startPosition, endPosition],
-    };
   }
+  
   finishRun();
 
   const features: Array<Feature<MultiLineString, HeartRateSegmentProperties>> =

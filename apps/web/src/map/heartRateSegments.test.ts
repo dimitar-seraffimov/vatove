@@ -77,7 +77,7 @@ describe("buildHeartRateRoutePresentation", () => {
     expect(presentation.data.features).toHaveLength(1);
     expect(presentation.data.features[0]?.properties).toEqual({
       activityId: "persisted-first",
-      color: "#35a66f",
+      color: "rgba(53, 166, 111, 1)",
       zoneIndex: 1,
     });
   });
@@ -98,16 +98,16 @@ describe("buildHeartRateRoutePresentation", () => {
 
     expect(presentation.stats.coloredEdges).toBe(1);
     expect(presentation.data.features[0]?.properties).toMatchObject({
-      color: "#0f0",
+      color: "rgba(0, 255, 0, 1)",
       zoneIndex: 1,
     });
   });
 
   it.each([
-    ["#F00", "#f00"],
-    ["#FF0000FF", "#ff0000ff"],
-    ["FF0000", "#ff0000"],
-    ["rgb(255, 0, 0)", "rgb(255, 0, 0)"],
+    ["#F00", "rgba(255, 0, 0, 1)"],
+    ["#FF0000FF", "rgba(255, 0, 0, 1)"],
+    ["FF0000", "rgba(255, 0, 0, 1)"],
+    ["rgb(255, 0, 0)", "rgba(255, 0, 0, 1)"],
   ])("accepts MapLibre-compatible zone colour %s", (input, expected) => {
     const presentation = buildHeartRateRoutePresentation({
       id: "colour-formats",
@@ -131,7 +131,7 @@ describe("buildHeartRateRoutePresentation", () => {
     });
 
     expect(presentation.data.features[0]?.properties.zoneIndex).toBe(1);
-    expect(presentation.data.features[0]?.properties.color).toBe("#111111");
+    expect(presentation.data.features[0]?.properties.color).toBe("rgba(17, 17, 17, 1)");
   });
 
   it("falls back to the ending sample for an isolated missing starting HR", () => {
@@ -207,15 +207,16 @@ describe("buildHeartRateRoutePresentation", () => {
     );
 
     expect(zoneOne?.geometry.coordinates).toHaveLength(1);
-    expect(zoneOne?.geometry.coordinates[0]).toHaveLength(3);
+    expect(zoneOne?.geometry.coordinates[0]).toHaveLength(2);
     expect(zoneTwo?.geometry.coordinates).toHaveLength(1);
+    expect(zoneTwo?.geometry.coordinates[0]).toHaveLength(3);
     expect(zoneOne?.geometry.coordinates[0]?.at(-1)).toEqual(
       zoneTwo?.geometry.coordinates[0]?.at(0),
     );
     expect(presentation.stats.coloredEdges).toBe(3);
   });
 
-  it("breaks runs at invalid coordinates instead of bridging gaps", () => {
+  it("bridges gaps between valid coordinates when intermediate samples lack GPS data", () => {
     const samples = [
       sample(0, 1),
       sample(1, 1),
@@ -232,19 +233,17 @@ describe("buildHeartRateRoutePresentation", () => {
     });
 
     expect(presentation.stats).toEqual({
-      totalEdges: 4,
-      coloredEdges: 2,
+      totalEdges: 3,
+      coloredEdges: 3,
       neutralEdges: 0,
-      discardedEdges: 2,
+      discardedEdges: 1,
     });
     expect(presentation.data.features).toHaveLength(1);
-    expect(presentation.data.features[0]?.geometry.coordinates).toHaveLength(2);
+    expect(presentation.data.features[0]?.geometry.coordinates).toHaveLength(1);
     expect(presentation.data.features[0]?.geometry.coordinates).toEqual([
       [
         [samples[0]!.longitude, samples[0]!.latitude],
         [samples[1]!.longitude, samples[1]!.latitude],
-      ],
-      [
         [samples[3]!.longitude, samples[3]!.latitude],
         [samples[4]!.longitude, samples[4]!.latitude],
       ],
@@ -276,7 +275,7 @@ describe("buildHeartRateRoutePresentation", () => {
     for (const feature of presentation.data.features) {
       expect(feature.properties.activityId).toBe("large-activity");
       expect(feature.properties.zoneIndex).toBeTypeOf("number");
-      expect(feature.properties.color).toMatch(/^#[0-9a-f]{6}$/);
+      expect(feature.properties.color).toMatch(/^rgba\(\d+, \d+, \d+, [\d.]+\)$/);
       expect(feature.geometry.coordinates.length).toBeGreaterThan(0);
     }
   });
